@@ -49,6 +49,9 @@ tasks:
         echo "📋 Coverage Report:"
         coverage report --show-missing
         
+        # Generate XML for CI/CD
+        coverage xml
+        
         # Check config module coverage specifically  
         CONFIG_COVERAGE=$(coverage report | grep "config.py" | awk '{print $4}' | sed 's/%//')
         
