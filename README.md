@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Tests](https://github.com/khengyun/notebooklm-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/khengyun/notebooklm-mcp/actions)
-[![codecov](https://codecov.io/gh/khengyun/notebooklm-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/khengyun/notebooklm-mcp)
+[![codecov](https://codecov.io/gh/khengyun/notebooklm-mcp/graph/badge.svg)](https://codecov.io/gh/khengyun/notebooklm-mcp)
 
 Professional **Model Context Protocol (MCP) server** for automating interactions with Google's **NotebookLM**. Features persistent browser sessions, streaming response support, and comprehensive automation capabilities.
 
