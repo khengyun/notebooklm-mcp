@@ -15,7 +15,7 @@ tasks:
   install:
     desc: Install package in development mode
     cmds:
-      - pip install -e ".[dev]"
+      - pip install -e ".[dev,test]"
 
   # Quick Testing Tasks
   test:quick:
