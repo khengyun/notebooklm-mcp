@@ -63,9 +63,10 @@ jobs:
     - name: Lint with ruff
       run: task lint
     
-    - name: Type check with mypy
-      run: task lint:mypy
-      continue-on-error: true
+    # Skip mypy for now due to type annotation work in progress
+    # - name: Type check with mypy
+    #   run: task lint:mypy
+    #   continue-on-error: true
 
     - name: Run unit tests
       run: task test:unit
