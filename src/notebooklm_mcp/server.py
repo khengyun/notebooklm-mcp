@@ -15,7 +15,6 @@ try:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
-    from mcp.shared.types import JSONSchema
 except ImportError:
     logger.error("MCP library required. Install with: pip install mcp")
     sys.exit(1)
@@ -42,13 +41,9 @@ class NotebookLMServer:
         async def list_tools() -> List[Tool]:
             return [
                 Tool(
-                    name="healthcheck", 
+                    name="healthcheck",
                     description="Check server health status",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
+                    inputSchema={"type": "object", "properties": {}, "required": []},
                 ),
                 Tool(
                     name="send_chat_message",
@@ -86,11 +81,7 @@ class NotebookLMServer:
                 Tool(
                     name="get_quick_response",
                     description="Get current response without waiting for completion",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
+                    inputSchema={"type": "object", "properties": {}, "required": []},
                 ),
                 Tool(
                     name="chat_with_notebook",
@@ -128,11 +119,7 @@ class NotebookLMServer:
                 Tool(
                     name="get_default_notebook",
                     description="Get current default notebook ID",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
+                    inputSchema={"type": "object", "properties": {}, "required": []},
                 ),
                 Tool(
                     name="set_default_notebook",
@@ -149,13 +136,9 @@ class NotebookLMServer:
                     },
                 ),
                 Tool(
-                    name="shutdown", 
+                    name="shutdown",
                     description="Shutdown the server gracefully",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
+                    inputSchema={"type": "object", "properties": {}, "required": []},
                 ),
             ]
 
@@ -275,8 +258,12 @@ class NotebookLMServer:
 
             # Start MCP server over STDIO
             async with stdio_server() as (reader, writer):
-                from mcp.shared.types import InitializationOptions
-                init_options = InitializationOptions()
+                try:
+                    from mcp.shared.types import InitializationOptions
+
+                    init_options = InitializationOptions()
+                except ImportError:
+                    init_options = None
                 await self.server.run(reader, writer, init_options)
 
         except KeyboardInterrupt:

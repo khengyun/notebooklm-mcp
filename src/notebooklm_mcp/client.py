@@ -111,7 +111,7 @@ class NotebookLMClient:
         """Synchronous authentication logic"""
         if self.driver is None:
             raise RuntimeError("Browser driver not initialized")
-            
+
         target_url = self.config.base_url
         if self.current_notebook_id:
             target_url = f"{self.config.base_url}/notebook/{self.current_notebook_id}"
@@ -155,7 +155,7 @@ class NotebookLMClient:
         """Synchronous message sending"""
         if self.driver is None:
             raise RuntimeError("Browser driver not initialized")
-            
+
         # Ensure we're on the right notebook
         if self.current_notebook_id:
             current_url = self.driver.current_url
@@ -259,7 +259,7 @@ class NotebookLMClient:
         """Check if response is still streaming"""
         if self.driver is None:
             return False
-            
+
         try:
             indicators = [
                 "[class*='loading']",
@@ -284,7 +284,7 @@ class NotebookLMClient:
         """Get current response text"""
         if self.driver is None:
             return ""
-            
+
         response_selectors = [
             "[data-testid*='response']",
             "[data-testid*='message']",
@@ -345,7 +345,7 @@ class NotebookLMClient:
         """Synchronous notebook navigation"""
         if self.driver is None:
             raise RuntimeError("Browser driver not initialized")
-            
+
         url = f"{self.config.base_url}/notebook/{notebook_id}"
         self.driver.get(url)
 
