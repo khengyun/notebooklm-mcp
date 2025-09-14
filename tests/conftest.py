@@ -2,21 +2,27 @@
 Test configuration and fixtures
 """
 
-import pytest
-import os
 import asyncio
+import os
 
 # Disable napari plugins to avoid conflicts
 import sys
-if 'napari' in sys.modules:
-    del sys.modules['napari']
+
+import pytest
+
+if "napari" in sys.modules:
+    del sys.modules["napari"]
+
 
 def pytest_configure(config):
     """Configure pytest with custom markers"""
     # Disable napari plugins
-    config.option.plugins = [p for p in (config.option.plugins or []) 
-                           if not any(napari in p for napari in ['napari', 'npe2'])]
-    
+    config.option.plugins = [
+        p
+        for p in (config.option.plugins or [])
+        if not any(napari in p for napari in ["napari", "npe2"])
+    ]
+
     config.addinivalue_line("markers", "unit: Unit tests")
     config.addinivalue_line("markers", "integration: Integration tests")
     config.addinivalue_line("markers", "browser: Tests requiring browser")
@@ -62,25 +68,25 @@ def test_config_data():
         "auth": {
             "profile_dir": "./test_chrome_profile",
             "use_persistent_session": True,
-            "auto_login": True
-        }
+            "auto_login": True,
+        },
     }
 
 
 # Skip integration tests if no browser available
 def pytest_runtest_setup(item):
     """Setup function to skip tests based on markers and environment"""
-    
+
     # Skip browser tests if no display available
     if item.get_closest_marker("browser"):
         if not os.getenv("DISPLAY") and not os.getenv("GITHUB_ACTIONS"):
             pytest.skip("No display available for browser tests")
-    
+
     # Skip integration tests if explicitly disabled
     if item.get_closest_marker("integration"):
         if os.getenv("SKIP_INTEGRATION_TESTS"):
             pytest.skip("Integration tests disabled")
-    
+
     # Skip slow tests if running quick tests
     if item.get_closest_marker("slow"):
         if os.getenv("QUICK_TESTS"):
