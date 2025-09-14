@@ -2,8 +2,6 @@
 Simplified professional tests for NotebookLM modules
 """
 
-from unittest.mock import Mock, patch
-
 import pytest
 
 from notebooklm_mcp.client import NotebookLMClient
@@ -129,10 +127,10 @@ class TestClientModule:
         # Test that client is initialized correctly
         assert client.config.headless is True
         assert client.driver is None
-        
+
         # Test browser configuration without actually starting browser
         # This is safer for CI environments
-        assert hasattr(client, '_start_browser')
+        assert hasattr(client, "_start_browser")
         assert callable(client._start_browser)
 
     def test_browser_configuration_headless(self):
