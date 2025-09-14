@@ -75,9 +75,20 @@ jobs:
       run: task lint:mypy
 
     - name: Run unit tests
-      run: task test:unit
+      run: |
+        # Generate both coverage.xml and JUnit XML reports
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 coverage run \
+          --source=src/notebooklm_mcp \
+          -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py \
+          -p no:napari -p no:napari-plugin-engine -p no:npe2 \
+          --junitxml=junit.xml \
+          -v
+        
+        # Generate coverage XML
+        coverage xml
       env:
         QT_QPA_PLATFORM: offscreen
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
         PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
     
     - name: Run tests with coverage
@@ -86,6 +97,13 @@ jobs:
         QT_QPA_PLATFORM: offscreen
         PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
     
+    - name: Upload test results to Codecov
+      if: ${{ !cancelled() }}
+      uses: codecov/test-results-action@v1
+      with:
+        file: ./junit.xml
+        token: ${{ secrets.CODECOV_TOKEN }}
+
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
       with:
