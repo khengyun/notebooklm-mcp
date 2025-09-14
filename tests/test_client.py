@@ -3,9 +3,9 @@ Unit tests for NotebookLM MCP client
 """
 
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, patch
 from notebooklm_mcp import NotebookLMClient, ServerConfig
-from notebooklm_mcp.exceptions import AuthenticationError, ChatError
+from notebooklm_mcp.exceptions import ChatError
 
 
 @pytest.fixture
@@ -154,7 +154,7 @@ class TestNotebookLMClient:
         with patch('selenium.webdriver.support.ui.WebDriverWait') as mock_wait:
             mock_wait.return_value.until.return_value = True
             
-            result = await client.navigate_to_notebook("new-notebook-id")
+            await client.navigate_to_notebook("new-notebook-id")
             
         assert client.current_notebook_id == "new-notebook-id"
         mock_driver.get.assert_called_with("https://notebooklm.google.com/notebook/new-notebook-id")
