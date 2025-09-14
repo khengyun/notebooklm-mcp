@@ -6,7 +6,7 @@ import asyncio
 import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 
 import psutil
 from loguru import logger
@@ -50,10 +50,10 @@ class Metrics:
 class MetricsCollector:
     """Collects and manages application metrics"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.metrics = Metrics()
         self.start_time = time.time()
-        self._request_times = []
+        self._request_times: list[float] = []
 
         # Prometheus metrics (if available)
         if PROMETHEUS_AVAILABLE:
@@ -83,7 +83,7 @@ class MetricsCollector:
             )
             self.cpu_usage_gauge = Gauge("notebooklm_cpu_usage_percent", "CPU usage")
 
-    def record_request(self, success: bool, response_time: float):
+    def record_request(self, success: bool, response_time: float) -> None:
         """Record a request"""
         self.metrics.requests_total += 1
 
@@ -109,25 +109,25 @@ class MetricsCollector:
             self.requests_counter.inc()
             self.response_time_histogram.observe(response_time)
 
-    def record_browser_restart(self):
+    def record_browser_restart(self) -> None:
         """Record browser restart"""
         self.metrics.browser_restarts += 1
         if PROMETHEUS_AVAILABLE:
             self.browser_restarts_counter.inc()
 
-    def record_auth_failure(self):
+    def record_auth_failure(self) -> None:
         """Record authentication failure"""
         self.metrics.authentication_failures += 1
         if PROMETHEUS_AVAILABLE:
             self.auth_failures_counter.inc()
 
-    def update_active_sessions(self, count: int):
+    def update_active_sessions(self, count: int) -> None:
         """Update active sessions count"""
         self.metrics.active_sessions = count
         if PROMETHEUS_AVAILABLE:
             self.active_sessions_gauge.set(count)
 
-    def update_system_metrics(self):
+    def update_system_metrics(self) -> None:
         """Update system metrics"""
         if PROMETHEUS_AVAILABLE:
             # Memory usage
@@ -146,9 +146,9 @@ class MetricsCollector:
 class HealthChecker:
     """Health check functionality"""
 
-    def __init__(self, client=None):
+    def __init__(self, client: Optional[Any] = None) -> None:
         self.client = client
-        self.last_check = None
+        self.last_check: Optional[HealthStatus] = None
 
     async def check_health(self) -> HealthStatus:
         """Perform comprehensive health check"""
@@ -226,7 +226,7 @@ health_checker = HealthChecker()
 
 
 @asynccontextmanager
-async def request_timer():
+async def request_timer() -> AsyncGenerator[None, None]:
     """Context manager for timing requests"""
     start_time = time.time()
     success = False
@@ -243,7 +243,7 @@ async def request_timer():
         metrics_collector.record_request(success, response_time)
 
 
-def setup_monitoring(port: int = 8001):
+def setup_monitoring(port: int = 8001) -> None:
     """Setup monitoring server"""
     if PROMETHEUS_AVAILABLE:
         logger.info(f"Starting Prometheus metrics server on port {port}")
@@ -252,7 +252,7 @@ def setup_monitoring(port: int = 8001):
         logger.warning("Prometheus client not available, metrics will not be exported")
 
 
-async def periodic_health_check(interval: int = 30):
+async def periodic_health_check(interval: int = 30) -> None:
     """Run periodic health checks"""
     while True:
         try:
@@ -265,7 +265,7 @@ async def periodic_health_check(interval: int = 30):
 
 
 # Logging configuration
-def setup_logging(debug: bool = False):
+def setup_logging(debug: bool = False) -> None:
     """Setup structured logging"""
     import sys
 
