@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  notebooklm-mcp:
+    build: .
+    image: notebooklm-mcp:latest
+    container_name: notebooklm-mcp-server
+    restart: unless-stopped
+    
+    environment:
+      # Core settings
+      - NOTEBOOKLM_HEADLESS=true
+      - NOTEBOOKLM_DEBUG=false
+      - NOTEBOOKLM_TIMEOUT=60
+      
+      # Notebook configuration
+      - NOTEBOOKLM_NOTEBOOK_ID=${NOTEBOOKLM_NOTEBOOK_ID}
+      
+      # Chrome settings
+      - NOTEBOOKLM_PROFILE_DIR=/app/chrome_profile
+      - NOTEBOOKLM_PERSISTENT_SESSION=true
+      
+    volumes:
+      # Persist Chrome profile for session management
+      - chrome_profile:/app/chrome_profile
+      
+      # Optional: Mount config file
+      - ./config.json:/app/config.json:ro
+      
+      # Optional: Mount custom scripts
+      - ./scripts:/app/scripts:ro
+    
+    # For STDIO MCP mode, no ports needed
+    # ports:
+    #   - "8000:8000"
+    
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "from notebooklm_mcp.config import ServerConfig; ServerConfig().validate()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Add monitoring with Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: notebooklm-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    profiles:
+      - monitoring
+
+  # Optional: Add Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: notebooklm-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    profiles:
+      - monitoring
+
+volumes:
+  chrome_profile:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  default:
+    name: notebooklm-mcp-network

@@ -1,0 +1,186 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Chrome Browser Data & Profiles
+chrome_profile_notebooklm/
+chrome_profile_*/
+Default/
+Profile*/
+SingletonCookie
+SingletonLock
+SingletonSocket
+*.pma
+*.db
+*.db-journal
+Last\ Version
+Local\ State
+Variations
+BrowserMetrics*
+AmountExtractionHeuristicRegexes/
+AutofillStates/
+CertificateRevocation/
+component_crx_cache/
+CookieReadinessList/
+Crowd\ Deny/
+Dictionaries/
+extensions_crx_cache/
+FileTypePolicies/
+FirstPartySetsPreloaded/
+GraphiteDawnCache/
+GrShaderCache/
+hyphen-data/
+MEIPreload/
+NativeMessagingHosts/
+OnDeviceHeadSuggestModel/
+OpenCookieDatabase/
+optimization_guide_model_store/
+OptimizationHints/
+OriginTrials/
+PKIMetadata/
+PrivacySandboxAttestationsPreloaded/
+ProbabilisticRevealTokenRegistry/
+Safe\ Browsing/
+SafetyTips/
+segmentation_platform/
+ShaderCache/
+SSLErrorAssistant/
+Subresource\ Filter/
+TpcdMetadata/
+TrustTokenKeyCommitments/
+WasmTtsEngine/
+WidevineCdm/
+ZxcvbnData/
+
+# Authentication & Session files
+cookies.json
+session_data/
+auth_tokens/
+*.session
+
+# Selenium WebDriver
+chromedriver*
+geckodriver*
+*.driver
+
+# Logs
+*.log
+logs/
+.logs/
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+.temp/
+
+# Legacy development files
+legacy/chrome_profile_*/
+legacy/cookies.json
+legacy/*.log
+
+# Test outputs
+test_outputs/
+debug_*
+*.debug
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Configuration backups
+*.bak
+*.backup
+config_backup/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Keep example files but ignore real config
+!example_*.json
+!config_example.json
+
+# Runtime
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+.nyc_output
+
+# Keep important docs and configs
+!README.md
+!LICENSE
+!requirements.txt
+!pyproject.toml
+!docker-compose.yml
+!Dockerfile

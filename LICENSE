@@ -1,0 +1,56 @@
+MIT License
+
+Copyright (c) 2025 Kangkhengyun (khengyun)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## Additional Terms for NotebookLM MCP Server
+
+This project provides automation tools for Google NotebookLM through the Model Context Protocol (MCP).
+
+**Author**: Kangkhengyun (khengyun)  
+**Institution**: FPT University, Vietnam  
+**ORCID**: 0000-0003-3616-0367
+
+### Disclaimer
+
+- This software is provided for educational and research purposes
+- Use in compliance with Google's Terms of Service and NotebookLM usage policies  
+- The author is not responsible for any misuse or violation of third-party services
+- Users are responsible for ensuring compliance with applicable laws and regulations
+
+### Attribution
+
+If you use this software in academic research, please consider citing:
+
+```bibtex
+@software{notebooklm_mcp_server,
+  title={NotebookLM MCP Server: Professional Automation for Google NotebookLM},
+  author={Kangkhengyun},
+  year={2025},
+  institution={FPT University},
+  url={https://github.com/khengyun/notebooklm-mcp}
+}
+```
+
+### Contributions
+
+Contributions are welcome under the same MIT License terms. By contributing, you agree that your contributions will be licensed under the MIT License.
