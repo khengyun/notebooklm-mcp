@@ -14,14 +14,14 @@ try:
     from mcp.server import Server
     from mcp.types import Tool, TextContent
     from mcp.server.stdio import stdio_server
-except ImportError as e:
+except ImportError:
     logger.error("MCP library required. Install with: pip install mcp")
     sys.exit(1)
 
 from .config import ServerConfig, load_config
 from .client import NotebookLMClient
 from .exceptions import NotebookLMError
-from .monitoring import metrics_collector, health_checker, request_timer
+from .monitoring import health_checker, request_timer
 
 
 class NotebookLMServer:

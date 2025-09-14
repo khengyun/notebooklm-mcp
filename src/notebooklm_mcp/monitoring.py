@@ -144,7 +144,7 @@ class HealthChecker:
                 if self.client.driver is not None:
                     try:
                         # Try to get current URL to test browser responsiveness
-                        current_url = self.client.driver.current_url
+                        _ = self.client.driver.current_url
                         browser_status = "healthy"
                     except Exception as e:
                         browser_status = f"unhealthy: {str(e)[:50]}"

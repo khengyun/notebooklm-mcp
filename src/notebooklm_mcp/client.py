@@ -4,7 +4,7 @@ Browser automation client for NotebookLM interactions
 
 import time
 import asyncio
-from typing import Optional, List, Dict, Any
+from typing import Optional
 from pathlib import Path
 
 from selenium import webdriver
@@ -12,7 +12,7 @@ from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException
 from loguru import logger
 
 try:
@@ -22,7 +22,7 @@ except ImportError:
     USE_UNDETECTED = False
 
 from .config import ServerConfig
-from .exceptions import AuthenticationError, NavigationError, ChatError, StreamingError
+from .exceptions import AuthenticationError, NavigationError, ChatError
 
 
 class NotebookLMClient:
