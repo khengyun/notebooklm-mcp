@@ -44,7 +44,7 @@ If you use this software in academic research, please consider citing:
 ```bibtex
 @software{notebooklm_mcp_server,
   title={NotebookLM MCP Server: Professional Automation for Google NotebookLM},
-  author={Kangkhengyun},
+  author={khengyun},
   year={2025},
   institution={FPT University},
   url={https://github.com/khengyun/notebooklm-mcp}

@@ -209,8 +209,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🆘 **Support**
 
-- **Issues**: [GitHub Issues](https://github.com/notebooklm-mcp/notebooklm-mcp/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/notebooklm-mcp/notebooklm-mcp/discussions)
+- **Issues**: [GitHub Issues](https://github.com/khengyun/notebooklm-mcp/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/khengyun/notebooklm-mcp/discussions)
 
 ---
 
