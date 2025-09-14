@@ -5,11 +5,18 @@ Test configuration and fixtures
 import pytest
 import os
 import asyncio
-from pathlib import Path
 
+# Disable napari plugins to avoid conflicts
+import sys
+if 'napari' in sys.modules:
+    del sys.modules['napari']
 
 def pytest_configure(config):
     """Configure pytest with custom markers"""
+    # Disable napari plugins
+    config.option.plugins = [p for p in (config.option.plugins or []) 
+                           if not any(napari in p for napari in ['napari', 'npe2'])]
+    
     config.addinivalue_line("markers", "unit: Unit tests")
     config.addinivalue_line("markers", "integration: Integration tests")
     config.addinivalue_line("markers", "browser: Tests requiring browser")

@@ -180,7 +180,17 @@ coverage/
 # Keep important docs and configs
 !README.md
 !LICENSE
-!requirements.txt
 !pyproject.toml
 !docker-compose.yml
 !Dockerfile
+
+# Chrome browser profile (important for persistent sessions)
+chrome_profile_notebooklm/
+
+# Demo files and temporary scripts
+demo_*.py
+temp_*.py
+scratch_*.py
+
+# VS Code workspace files
+*.code-workspace

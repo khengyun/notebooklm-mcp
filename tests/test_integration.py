@@ -4,7 +4,7 @@ Integration tests for NotebookLM MCP server
 
 import pytest
 import os
-import asyncio
+import json
 from unittest.mock import patch
 
 from notebooklm_mcp import NotebookLMClient, ServerConfig

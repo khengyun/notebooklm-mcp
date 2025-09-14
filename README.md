@@ -4,7 +4,8 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Tests](https://github.com/notebooklm-mcp/notebooklm-mcp/workflows/Tests/badge.svg)](https://github.com/notebooklm-mcp/notebooklm-mcp/actions)
+[![Tests](https://github.com/khengyun/notebooklm-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/khengyun/notebooklm-mcp/actions)
+[![codecov](https://codecov.io/gh/khengyun/notebooklm-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/khengyun/notebooklm-mcp)
 
 Professional **Model Context Protocol (MCP) server** for automating interactions with Google's **NotebookLM**. Features persistent browser sessions, streaming response support, and comprehensive automation capabilities.
 
@@ -189,19 +190,98 @@ pre-commit install
 
 ### **Running Tests**
 
+The test suite includes unit tests, integration tests, and proper handling of plugin conflicts.
+
 ```bash
-# Run all tests
-pytest
+# Install test dependencies
+pip install -e ".[dev]"
 
-# Run with coverage
-pytest --cov=notebooklm_mcp
+# Run all unit tests (recommended)
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_config.py tests/test_config_real.py -v -p no:napari -p no:napari-plugin-engine -p no:npe2 -p no:cov
 
-# Run only unit tests
-pytest -m unit
+# Run specific test file
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_config.py -v
 
-# Run integration tests (requires browser)
-pytest -m integration
+# Run with coverage (unit tests only - stable)
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_config.py tests/test_config_real.py --cov=notebooklm_mcp --cov-report=html
+
+# Quick test - single unit test
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_config.py::TestServerConfig::test_default_config -v
 ```
+
+#### **Test Categories**
+
+| Test Type | Status | Description | Command |
+|-----------|--------|-------------|---------|
+| **Unit Tests** | ✅ Stable | Config validation, core logic | `pytest tests/test_config*.py` |
+| **Integration Tests** | ⚠️ Requires setup | Browser automation, full workflow | `pytest tests/test_integration.py` |
+| **Client Tests** | ⚠️ Async setup needed | Client functionality | `pytest tests/test_client.py` |
+
+#### **Test Environment Notes**
+
+- **Napari Plugin Conflicts**: Solved with `-p no:napari` flags
+- **Async Tests**: Require `pytest-asyncio` plugin configuration
+- **Browser Tests**: Need actual Chrome browser installation
+- **Environment Variables**: Use `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` for stability
+
+#### **Successful Test Run Example**
+
+```bash
+$ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_config.py -v
+=================== test session starts ===================
+collected 12 items
+
+tests/test_config.py::TestServerConfig::test_default_config PASSED          [  8%]
+tests/test_config.py::TestServerConfig::test_config_validation_success PASSED [ 16%]
+tests/test_config.py::TestServerConfig::test_config_validation_negative_timeout PASSED [ 25%]
+...
+tests/test_config.py::TestLoadConfig::test_load_config_no_args PASSED       [100%]
+
+=================== 12 passed in 0.30s ===================
+```
+
+#### **CI/CD & Testing Status**
+
+Our GitHub Actions workflow ensures code quality and functionality:
+
+| Workflow | Status | Description |
+|----------|--------|-------------|
+| **Unit Tests** | ✅ Stable | Config validation and core logic tests |
+| **Integration Tests** | ⚡ On main branch | Browser automation and full workflow |
+| **Security Scan** | 🔒 Bandit | Static security analysis |
+| **Code Quality** | 📊 Multiple tools | Linting, formatting, type checking |
+
+#### **Local Development Testing**
+
+We use [Taskfile](https://taskfile.dev/) for streamlined task management:
+
+```bash
+# Install Taskfile (if not installed)
+# macOS: brew install go-task/tap/go-task
+# Linux: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d
+
+# Quick development test
+task test:quick
+
+# Full unit test suite (stable)
+task test:unit
+
+# Integration tests (requires Chrome)
+task test:integration
+
+# Test with coverage (≥95% required)
+task test:coverage
+
+# Development workflow
+task dev:setup    # Setup environment
+task dev:test     # Run tests + lint
+task dev:check    # Pre-commit checks
+
+# Show all available tasks
+task --list
+```
+
+**Legacy Commands**: If you don't have Taskfile, use the direct pytest commands from the **Running Tests** section above.
 
 ## 📄 **License**
 
