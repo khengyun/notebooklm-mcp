@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main ]
 
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
   QT_QPA_PLATFORM: offscreen
