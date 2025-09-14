@@ -89,14 +89,7 @@ jobs:
       env:
         QT_QPA_PLATFORM: offscreen
         PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
-        PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
-    
-    - name: Run tests with coverage
-      run: task test:coverage
-      env:
-        QT_QPA_PLATFORM: offscreen
-        PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
-    
+
     - name: Upload test results to Codecov
       if: ${{ !cancelled() }}
       uses: codecov/test-results-action@v1
