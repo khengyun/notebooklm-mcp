@@ -95,7 +95,7 @@ def chat(
     if headless:
         config.headless = True
 
-    async def run_chat():
+    async def run_chat() -> None:
         client = NotebookLMClient(config)
 
         try:
@@ -190,7 +190,7 @@ def test(ctx: click.Context, notebook: str, headless: bool) -> None:
     if headless:
         config.headless = True
 
-    async def run_test():
+    async def run_test() -> None:
         client = NotebookLMClient(config)
 
         try:

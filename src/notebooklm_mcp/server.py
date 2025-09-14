@@ -15,6 +15,7 @@ try:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
+    from mcp.shared.types import JSONSchema
 except ImportError:
     logger.error("MCP library required. Install with: pip install mcp")
     sys.exit(1)
@@ -34,13 +35,21 @@ class NotebookLMServer:
         self.server = Server("notebooklm-mcp")
         self._setup_tools()
 
-    def _setup_tools(self):
+    def _setup_tools(self) -> None:
         """Register MCP tools"""
 
-        @self.server.list_tools()
+        @self.server.list_tools()  # type: ignore[misc]
         async def list_tools() -> List[Tool]:
             return [
-                Tool(name="healthcheck", description="Check server health status"),
+                Tool(
+                    name="healthcheck", 
+                    description="Check server health status",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                ),
                 Tool(
                     name="send_chat_message",
                     description="Send a message to NotebookLM chat",
@@ -77,6 +86,11 @@ class NotebookLMServer:
                 Tool(
                     name="get_quick_response",
                     description="Get current response without waiting for completion",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
                 ),
                 Tool(
                     name="chat_with_notebook",
@@ -114,6 +128,11 @@ class NotebookLMServer:
                 Tool(
                     name="get_default_notebook",
                     description="Get current default notebook ID",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
                 ),
                 Tool(
                     name="set_default_notebook",
@@ -129,10 +148,18 @@ class NotebookLMServer:
                         "required": ["notebook_id"],
                     },
                 ),
-                Tool(name="shutdown", description="Shutdown the server gracefully"),
+                Tool(
+                    name="shutdown", 
+                    description="Shutdown the server gracefully",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                ),
             ]
 
-        @self.server.call_tool()
+        @self.server.call_tool()  # type: ignore[misc]
         async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             """Handle tool calls"""
             try:
@@ -155,21 +182,29 @@ class NotebookLMServer:
             return f"Server healthy: {health.healthy}, Uptime: {health.uptime:.1f}s"
 
         elif name == "send_chat_message":
+            if self.client is None:
+                raise RuntimeError("Client not initialized")
             message = arguments.get("message", "")
             await self.client.send_message(message)
             return "Message sent successfully"
 
         elif name == "get_chat_response":
+            if self.client is None:
+                raise RuntimeError("Client not initialized")
             wait_for_completion = arguments.get("wait_for_completion", True)
             max_wait = arguments.get("max_wait", 60)
             response = await self.client.get_response(wait_for_completion, max_wait)
             return response
 
         elif name == "get_quick_response":
+            if self.client is None:
+                raise RuntimeError("Client not initialized")
             response = await self.client.get_response(wait_for_completion=False)
             return response
 
         elif name == "chat_with_notebook":
+            if self.client is None:
+                raise RuntimeError("Client not initialized")
             message = arguments.get("message", "")
             max_wait = arguments.get("max_wait", 60)
 
@@ -182,6 +217,8 @@ class NotebookLMServer:
             return response
 
         elif name == "navigate_to_notebook":
+            if self.client is None:
+                raise RuntimeError("Client not initialized")
             notebook_id = arguments.get("notebook_id", "")
             result_url = await self.client.navigate_to_notebook(notebook_id)
             return f"Navigated to: {result_url}"
@@ -201,7 +238,7 @@ class NotebookLMServer:
         else:
             raise NotebookLMError(f"Unknown tool: {name}")
 
-    async def _ensure_client(self):
+    async def _ensure_client(self) -> None:
         """Ensure client is initialized and authenticated"""
         if not self.client:
             self.client = NotebookLMClient(self.config)
@@ -218,7 +255,7 @@ class NotebookLMServer:
                     "Authentication required - browser will stay open for manual login"
                 )
 
-    async def _shutdown(self):
+    async def _shutdown(self) -> None:
         """Graceful shutdown"""
         logger.info("Shutting down server...")
         if self.client:
@@ -227,7 +264,7 @@ class NotebookLMServer:
         await asyncio.sleep(1)
         sys.exit(0)
 
-    async def run(self):
+    async def run(self) -> None:
         """Run the MCP server"""
         try:
             logger.info("Starting NotebookLM MCP Server...")
@@ -238,7 +275,9 @@ class NotebookLMServer:
 
             # Start MCP server over STDIO
             async with stdio_server() as (reader, writer):
-                await self.server.run(reader, writer, {})
+                from mcp.shared.types import InitializationOptions
+                init_options = InitializationOptions()
+                await self.server.run(reader, writer, init_options)
 
         except KeyboardInterrupt:
             logger.info("Server interrupted by user")
@@ -250,7 +289,7 @@ class NotebookLMServer:
                 await self.client.close()
 
 
-async def main():
+async def main() -> None:
     """Main entry point"""
     import argparse
 
