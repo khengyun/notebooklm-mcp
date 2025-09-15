@@ -36,7 +36,6 @@ permissions:
   contents: write    # Required to push commits and create tags
   actions: write     # Required to trigger workflows
   issues: read       # Required for workflow_run events
-  metadata: read     # Required for repository metadata
   
 # Cancel previous runs when new commits are pushed
 concurrency:
