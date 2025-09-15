@@ -2,7 +2,60 @@ name: "🧪 Tests & Quality with UV"
 
 on:
   push:
-    branches: [ main, develop ]
+        - name: "⚡ Install UV"
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        export PATH="$HOME/.cargo/bin:$PATH"
+
+    - name: "🐍 Set up Python ${{ matrix.python-version }}"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv python install ${{ matrix.python-version }}
+
+    - name: "📋 Install Task"
+      uses: arduino/setup-task@v2
+      with:
+        version: 3.x
+      continue-on-error: true
+      id: setup-task
+
+    - name: "📋 Install Task (fallback)"
+      if: steps.setup-task.outcome == 'failure'
+      run: |
+        echo "Arduino setup failed, using direct installation..."
+        sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+
+    - name: "✅ Verify UV Installation"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        echo "UV version:"
+        uv --version
+        echo "UV Python installations:"
+        uv python list
+        echo "Current PATH:"
+        echo $PATH
+
+    - name: "🗂️ Cache UV dependencies"
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/uv
+        key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-uv-
+
+    - name: "🌐 Install Chrome"
+      run: |
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+
+    - name: "📦 Install dependencies with UV"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        echo "Setting up project with UV..."
+        uv sync --all-groups: [ main, develop ]
   pull_request:
     branches: [ main ]
 
@@ -82,10 +135,13 @@ jobs:
         UV_PYTHON: ${{ matrix.python-version }}
 
     - name: "📋 Show available tasks"
-      run: task --list
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        task --list
 
     - name: "🔍 Lint and format"
       run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
         echo "🦀 Running Ruff linter..."
         uv run ruff check src/ tests/ --fix
         echo "⚫ Formatting with Black..."
@@ -95,6 +151,7 @@ jobs:
 
     - name: "🧪 Run unit tests with coverage"
       run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
         echo "📊 Running coverage analysis..."
         uv run coverage run --source=src/notebooklm_mcp -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py --junitxml=junit.xml
         uv run coverage report --show-missing

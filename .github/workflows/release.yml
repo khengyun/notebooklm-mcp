@@ -1,7 +1,43 @@
 name: "🚀 Release with UV"
 
-on:
-  push:
+o    - name: "⚡ Install UV"
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        export PATH="$HOME/.cargo/bin:$PATH"
+
+    - name: "🐍 Set up Python"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv python install 3.11
+
+    - name: "📋 Install Task"
+      uses: arduino/setup-task@v2
+      with:
+        version: 3.x
+
+    - name: "✅ Verify UV Installation"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        echo "UV version:"
+        uv --version
+        echo "UV Python installations:"
+        uv python list
+
+    - name: "📦 Setup project with UV"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv sync --all-groups
+
+    - name: "🏗️ Build package with UV"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv build
+
+    - name: "✅ Check package"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv run twine check dist/*:
     tags:
       - 'v*'
 
