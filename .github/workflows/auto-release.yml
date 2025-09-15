@@ -1,7 +1,10 @@
 name: "🚀 Auto Release on Main"
 
 on:
-  push:
+  workflow_run:
+    workflows: ["🧪 Tests & Quality with UV"]
+    types:
+      - completed
     branches: [ main ]
   workflow_dispatch:
     inputs:
@@ -20,16 +23,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
-  QT_QPA_PLATFORM: offscreen
-  UV_PYTHON: python3.10
-
 jobs:
-  # Check if this is a version bump commit (skip auto-release)
-  check-commit:
-    name: "🔍 Check Commit Type"
+  # Check if tests passed and determine if we should release
+  check-prerequisites:
+    name: "🔍 Check Prerequisites"
     runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
       is_manual: ${{ steps.check.outputs.is_manual }}
@@ -39,94 +38,48 @@ jobs:
       with:
         fetch-depth: 2
 
-    - name: "🔍 Check commit message"
+    - name: "🔍 Check prerequisites"
       id: check
       run: |
-        COMMIT_MSG=$(git log -1 --pretty=%B)
         IS_MANUAL="${{ github.event_name == 'workflow_dispatch' }}"
         
-        echo "Commit message: $COMMIT_MSG"
-        echo "Manual trigger: $IS_MANUAL"
-        
-        # Skip if this is a version bump commit
-        if [[ "$COMMIT_MSG" =~ ^(chore|bump|release):.*version.* ]]; then
-          echo "should_release=false" >> $GITHUB_OUTPUT
-          echo "⏭️ Skipping auto-release (version bump commit)"
-        elif [[ "$IS_MANUAL" == "true" ]]; then
+        if [[ "$IS_MANUAL" == "true" ]]; then
           echo "should_release=true" >> $GITHUB_OUTPUT
           echo "🚀 Manual release triggered"
         else
-          echo "should_release=true" >> $GITHUB_OUTPUT
-          echo "✅ Regular commit, proceeding with auto-release"
+          # Check if tests workflow succeeded
+          WORKFLOW_CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+          COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
+          
+          echo "Tests workflow conclusion: $WORKFLOW_CONCLUSION"
+          echo "Commit SHA: $COMMIT_SHA"
+          
+          # Get commit message from the triggering commit
+          git fetch origin $COMMIT_SHA
+          COMMIT_MSG=$(git log --format=%B -n 1 $COMMIT_SHA)
+          echo "Commit message: $COMMIT_MSG"
+          
+          # Skip if this is a version bump commit
+          if [[ "$COMMIT_MSG" =~ ^(chore|bump|release):.*version.* ]]; then
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "⏭️ Skipping auto-release (version bump commit)"
+          elif [[ "$WORKFLOW_CONCLUSION" == "success" ]]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "✅ Tests passed, proceeding with auto-release"
+          else
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "❌ Tests failed, skipping auto-release"
+          fi
         fi
         
         echo "is_manual=$IS_MANUAL" >> $GITHUB_OUTPUT
-
-  # Run full test suite
-  test:
-    name: "🧪 Full Test Suite"
-    runs-on: ubuntu-latest
-    needs: check-commit
-    if: needs.check-commit.outputs.should_release == 'true'
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-    steps:
-    - name: "📥 Checkout repository"
-      uses: actions/checkout@v4
-
-    - name: "⚡ Install UV"
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        export PATH="$HOME/.cargo/bin:$PATH"
-
-    - name: "🐍 Set up Python ${{ matrix.python-version }}"
-      run: |
-        export PATH="$HOME/.cargo/bin:$PATH"
-        uv python install ${{ matrix.python-version }}
-
-    - name: "📦 Install dependencies"
-      run: |
-        export PATH="$HOME/.cargo/bin:$PATH"
-        uv sync --all-groups
-      env:
-        UV_PYTHON: ${{ matrix.python-version }}
-
-    - name: "🌐 Install Chrome"
-      run: |
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-
-    - name: "🔍 Quality checks"
-      run: |
-        export PATH="$HOME/.cargo/bin:$PATH"
-        echo "🦀 Running Ruff linter..."
-        uv run ruff check src/ tests/
-        echo "⚫ Checking Black formatting..."
-        uv run black --check src/ tests/
-        echo "📊 Checking import sorting..."
-        uv run isort --check-only src/ tests/
-
-    - name: "🧪 Run tests with coverage"
-      run: |
-        export PATH="$HOME/.cargo/bin:$PATH"
-        echo "🧪 Running full test suite..."
-        uv run coverage run --source=src/notebooklm_mcp -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py -v
-        uv run coverage report --show-missing
-        echo "✅ Tests passed for Python ${{ matrix.python-version }}"
-      env:
-        QT_QPA_PLATFORM: offscreen
-        PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
 
   # Version bump and release
   auto-release:
     name: "🚀 Auto Version Bump & Release"
     runs-on: ubuntu-latest
-    needs: [check-commit, test]
-    if: always() && needs.check-commit.outputs.should_release == 'true' && needs.test.result == 'success'
+    needs: check-prerequisites
+    if: needs.check-prerequisites.outputs.should_release == 'true'
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
       tag_name: ${{ steps.bump.outputs.tag_name }}
@@ -156,16 +109,24 @@ jobs:
     - name: "📈 Determine version bump type"
       id: version-type
       run: |
-        if [[ "${{ needs.check-commit.outputs.is_manual }}" == "true" ]]; then
+        if [[ "${{ needs.check-prerequisites.outputs.is_manual }}" == "true" ]]; then
           VERSION_TYPE="${{ github.event.inputs.version_type }}"
         else
-          # Auto-determine based on commit messages since last tag
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
+          # Get commit SHA from workflow_run event or current HEAD
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
+            git fetch origin $COMMIT_SHA
+            COMMIT_MSG=$(git log --format=%B -n 1 $COMMIT_SHA)
+          else
+            COMMIT_MSG=$(git log -1 --pretty=%B)
+          fi
           
-          if echo "$COMMITS" | grep -i "breaking\|major"; then
+          echo "Analyzing commit: $COMMIT_MSG"
+          
+          # Auto-determine based on commit message
+          if echo "$COMMIT_MSG" | grep -i "breaking\|major"; then
             VERSION_TYPE="major"
-          elif echo "$COMMITS" | grep -i "feat\|feature\|minor"; then
+          elif echo "$COMMIT_MSG" | grep -i "feat\|feature\|minor"; then
             VERSION_TYPE="minor"  
           else
             VERSION_TYPE="patch"
@@ -245,24 +206,21 @@ jobs:
   summary:
     name: "📋 Auto-Release Summary"
     runs-on: ubuntu-latest
-    needs: [check-commit, test, auto-release]
+    needs: [check-prerequisites, auto-release]
     if: always()
     steps:
     - name: "📋 Summary"
       run: |
         echo "## 🚀 Auto-Release Summary"
-        echo "**Should Release:** ${{ needs.check-commit.outputs.should_release }}"
-        echo "**Test Result:** ${{ needs.test.result }}"
+        echo "**Should Release:** ${{ needs.check-prerequisites.outputs.should_release }}"
         echo "**Release Result:** ${{ needs.auto-release.result }}"
         
         if [[ "${{ needs.auto-release.result }}" == "success" ]]; then
           echo "✅ **Success!** New version ${{ needs.auto-release.outputs.new_version }} created"
           echo "🏷️ **Tag:** ${{ needs.auto-release.outputs.tag_name }}"
           echo "📦 **Release workflow triggered automatically**"
-        elif [[ "${{ needs.check-commit.outputs.should_release }}" == "false" ]]; then
-          echo "⏭️ **Skipped** - Version bump commit detected"
-        elif [[ "${{ needs.test.result }}" != "success" ]]; then
-          echo "❌ **Failed** - Tests did not pass"
+        elif [[ "${{ needs.check-prerequisites.outputs.should_release }}" == "false" ]]; then
+          echo "⏭️ **Skipped** - Prerequisites not met (version bump commit or tests failed)"
         else
           echo "❌ **Failed** - Auto-release encountered an error"
         fi
