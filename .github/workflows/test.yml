@@ -104,27 +104,20 @@ jobs:
       run: |
         export PATH="$HOME/.cargo/bin:$PATH"
         echo "📊 Running coverage analysis..."
-        uv run coverage run --source=src/notebooklm_mcp -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py --junitxml=junit.xml
+        uv run coverage run --source=src/notebooklm_mcp -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py --junitxml=junit.xml -v
         uv run coverage report --show-missing
         uv run coverage xml
-        uv run coverage html
-        echo "📋 Coverage report generated in htmlcov/"
+        echo "📋 Coverage report completed successfully"
       env:
         QT_QPA_PLATFORM: offscreen
         PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
 
-    - name: "📊 Upload test results to Codecov"
-      if: ${{ !cancelled() }}
-      uses: codecov/test-results-action@v1
-      with:
-        file: ./junit.xml
-        token: ${{ secrets.CODECOV_TOKEN }}
-
-    - name: "📈 Upload coverage to Codecov"
+    - name: "📊 Upload coverage to Codecov (optional)"
       if: ${{ !cancelled() }}
       uses: codecov/codecov-action@v4
       with:
         file: ./coverage.xml
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: false
-        verbose: true
+        verbose: false
+      continue-on-error: true
