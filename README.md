@@ -49,11 +49,8 @@ uv run notebooklm-mcp --config notebooklm-config.json server
 # Start HTTP server for web testing
 uv run notebooklm-mcp --config notebooklm-config.json server --transport http --port 8001
 
-# Start with custom config file
-uv run notebooklm-mcp --config my-custom-config.json server
-
 # Interactive chat mode
-uv run notebooklm-mcp --config notebooklm-config.json chat
+uv run notebooklm-mcp --config notebooklm-config.json chat  --message "Who are you ?"
 ```
 
 ### 👨‍💻 For Developers
