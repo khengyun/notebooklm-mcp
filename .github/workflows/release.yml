@@ -6,6 +6,16 @@ on:
       - 'v*'
   release:
     types: [created, published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to release (e.g., v2.0.1)'
+        required: true
+        type: string
+      version:
+        description: 'Version number (e.g., 2.0.1)'
+        required: true
+        type: string
 
 # Cancel previous release runs for the same tag
 concurrency:
