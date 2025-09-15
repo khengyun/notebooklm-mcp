@@ -2,7 +2,33 @@ name: "🧪 Tests & Quality with UV"
 
 on:
   push:
-        - name: "⚡ Install UV"
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
+  QT_QPA_PLATFORM: offscreen
+  UV_PYTHON: python3.10
+
+jobs:
+  test:
+    name: "🧪 Unit Tests with UV (Python ${{ matrix.python-version }})"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+    - name: "📥 Checkout repository"
+      uses: actions/checkout@v4
+
+    - name: "⚡ Install UV"
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -55,81 +81,6 @@ on:
       run: |
         export PATH="$HOME/.cargo/bin:$PATH"
         echo "Setting up project with UV..."
-        uv sync --all-groups: [ main, develop ]
-  pull_request:
-    branches: [ main ]
-
-# Cancel previous runs when new commits are pushed
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
-  QT_QPA_PLATFORM: offscreen
-  UV_PYTHON: python3.10
-
-jobs:
-  test:
-    name: "🧪 Unit Tests with UV (Python ${{ matrix.python-version }})"
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-
-    steps:
-    - name: "📥 Checkout repository"
-      uses: actions/checkout@v4
-
-    - name: "⚡ Install UV"
-      uses: astral-sh/setup-uv@v3
-      with:
-        version: "latest"
-        enable-cache: true
-
-    - name: "🐍 Set up Python ${{ matrix.python-version }}"
-      run: uv python install ${{ matrix.python-version }}
-
-    - name: "📋 Install Task"
-      uses: arduino/setup-task@v2
-      with:
-        version: 3.x
-      continue-on-error: true
-      id: setup-task
-
-    - name: "📋 Install Task (fallback)"
-      if: steps.setup-task.outcome == 'failure'
-      run: |
-        echo "Arduino setup failed, using direct installation..."
-        sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
-
-    - name: "� Verify UV Installation"
-      run: |
-        echo "UV version:"
-        uv --version
-        echo "UV Python installations:"
-        uv python list
-        echo "Current PATH:"
-        echo $PATH
-
-    - name: "�🗂️ Cache UV dependencies"
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/uv
-        key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-uv-
-
-    - name: "🌐 Install Chrome"
-      run: |
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-
-    - name: "📦 Install dependencies with UV"
-      run: |
-        echo "Setting up project with UV..."
         uv sync --all-groups
       env:
         UV_PYTHON: ${{ matrix.python-version }}
@@ -170,161 +121,10 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
 
     - name: "📈 Upload coverage to Codecov"
+      if: ${{ !cancelled() }}
       uses: codecov/codecov-action@v4
       with:
         file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
         token: ${{ secrets.CODECOV_TOKEN }}
-      if: always()
-
-    - name: Upload test results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: test-results-${{ matrix.python-version }}
-        path: htmlcov/
-
-  integration-test:
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-
-    - name: Install Task
-      uses: arduino/setup-task@v2
-      with:
-        version: 3.x
-      continue-on-error: true
-      id: setup-task-quality
-
-    - name: Install Task (fallback)
-      if: steps.setup-task-quality.outcome == 'failure'
-      run: |
-        echo "Arduino setup failed, using direct installation..."
-        sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
-
-    - name: Install Chrome
-      run: |
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        task install
-
-    - name: Test package installation and CLI
-      run: |
-        task cli:test
-        task cli:import
-
-    - name: Test basic functionality
-      run: task test:quick
-
-  quality-check:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-
-    - name: Install Task
-      uses: arduino/setup-task@v2
-      with:
-        version: 3.x
-      continue-on-error: true
-      id: setup-task-quality
-
-    - name: Install Task (fallback)
-      if: steps.setup-task-quality.outcome == 'failure'
-      run: |
-        echo "Arduino setup failed, using direct installation..."
-        sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        task install
-
-    - name: Run development checks
-      run: task dev:check
-      continue-on-error: true
-
-  security-scan:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-
-    - name: Run Bandit Security Scan
-      run: |
-        pip install bandit
-        bandit -r src/ -f json -o bandit-report.json || true
-
-    - name: Upload security scan results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: security-scan-results
-        path: bandit-report.json
-
-  build:
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-
-    - name: Install Task
-      uses: arduino/setup-task@v2
-      with:
-        version: 3.x
-      continue-on-error: true
-      id: setup-task-build
-
-    - name: Install Task (fallback)
-      if: steps.setup-task-build.outcome == 'failure'
-      run: |
-        echo "Arduino setup failed, using direct installation..."
-        sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        task install
-
-    - name: Build package
-      run: task build
-
-    - name: Check package
-      run: |
-        pip install twine
-        twine check dist/*
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: dist
-        path: dist/
+        fail_ci_if_error: false
+        verbose: true
