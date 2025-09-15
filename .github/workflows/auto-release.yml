@@ -31,6 +31,11 @@ on:
         - minor
         - major
 
+# Permissions needed for auto-release
+permissions:
+  contents: write    # Required to push commits and create tags
+  actions: read      # Required to read workflow run status
+  
 # Cancel previous runs when new commits are pushed
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -128,6 +133,7 @@ jobs:
       with:
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
+        persist-credentials: true
 
     - name: "⚡ Install UV"
       run: |
@@ -224,11 +230,11 @@ jobs:
 
     - name: "📝 Commit version bump"
       run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+        git config --global user.name "GitHub Action"
         git add pyproject.toml
         git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }}"
-        git push
+        git push origin HEAD:main
 
     - name: "🏷️ Create and push tag"
       run: |
