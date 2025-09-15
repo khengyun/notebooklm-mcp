@@ -165,7 +165,7 @@ jobs:
         export PATH="$HOME/.cargo/bin:$PATH"
         echo "🧪 Running tests with coverage..."
         uv run coverage run --source=src/notebooklm_mcp -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py --junitxml=junit-${{ matrix.python-version }}.xml -v
-        uv run coverage xml --output=coverage-${{ matrix.python-version }}.xml
+        uv run coverage xml -o coverage-${{ matrix.python-version }}.xml
         echo "✅ Tests completed for Python ${{ matrix.python-version }}"
       env:
         QT_QPA_PLATFORM: offscreen
