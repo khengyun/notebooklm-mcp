@@ -6,6 +6,19 @@ on:
     types:
       - completed
     branches: [ main ]
+  push:
+    branches: [ main ]
+    paths:
+      - '!src/**'
+      - '!tests/**'
+      - '!pyproject.toml'
+      - '!.github/workflows/test.yml'
+      - 'docs/**'
+      - 'README.md'
+      - '.github/workflows/**'
+      - 'Taskfile.yml'
+      - 'docker-compose.yml'
+      - 'Dockerfile'
   workflow_dispatch:
     inputs:
       version_type:
@@ -28,10 +41,11 @@ jobs:
   check-prerequisites:
     name: "🔍 Check Prerequisites"
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
       is_manual: ${{ steps.check.outputs.is_manual }}
+      trigger_type: ${{ steps.check.outputs.trigger_type }}
     steps:
     - name: "📥 Checkout repository"
       uses: actions/checkout@v4
@@ -41,13 +55,19 @@ jobs:
     - name: "🔍 Check prerequisites"
       id: check
       run: |
+        EVENT_NAME="${{ github.event_name }}"
         IS_MANUAL="${{ github.event_name == 'workflow_dispatch' }}"
+        
+        echo "Event: $EVENT_NAME"
+        echo "Is manual: $IS_MANUAL"
         
         if [[ "$IS_MANUAL" == "true" ]]; then
           echo "should_release=true" >> $GITHUB_OUTPUT
+          echo "trigger_type=manual" >> $GITHUB_OUTPUT
           echo "🚀 Manual release triggered"
-        else
-          # Check if tests workflow succeeded
+          
+        elif [[ "$EVENT_NAME" == "workflow_run" ]]; then
+          # Triggered by test workflow completion
           WORKFLOW_CONCLUSION="${{ github.event.workflow_run.conclusion }}"
           COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
           
@@ -62,13 +82,32 @@ jobs:
           # Skip if this is a version bump commit
           if [[ "$COMMIT_MSG" =~ ^(chore|bump|release):.*version.* ]]; then
             echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "trigger_type=workflow_run" >> $GITHUB_OUTPUT
             echo "⏭️ Skipping auto-release (version bump commit)"
           elif [[ "$WORKFLOW_CONCLUSION" == "success" ]]; then
             echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "trigger_type=workflow_run" >> $GITHUB_OUTPUT
             echo "✅ Tests passed, proceeding with auto-release"
           else
             echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "trigger_type=workflow_run" >> $GITHUB_OUTPUT
             echo "❌ Tests failed, skipping auto-release"
+          fi
+          
+        elif [[ "$EVENT_NAME" == "push" ]]; then
+          # Direct push trigger (non-code changes)
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "Direct push commit: $COMMIT_MSG"
+          
+          # Skip if this is a version bump commit
+          if [[ "$COMMIT_MSG" =~ ^(chore|bump|release):.*version.* ]]; then
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "trigger_type=push" >> $GITHUB_OUTPUT
+            echo "⏭️ Skipping auto-release (version bump commit)"
+          else
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "trigger_type=push" >> $GITHUB_OUTPUT
+            echo "✅ Non-code changes detected, proceeding with auto-release"
           fi
         fi
         

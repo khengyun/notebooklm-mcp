@@ -3,8 +3,18 @@ name: "🧪 Tests & Quality with UV"
 on:
   push:
     branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/test.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/test.yml'
 
 # Cancel previous runs when new commits are pushed
 concurrency:
