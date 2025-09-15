@@ -195,7 +195,54 @@ class TestLoadConfig:
         ):
             mock_from_env.return_value = ServerConfig(headless=True)
 
-            config = load_config()
+            load_config()
 
             mock_from_env.assert_called_once()
+
+    def test_config_from_file_json_error(self):
+        """Test configuration loading with invalid JSON"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            f.write('{"invalid": json}')  # Invalid JSON
+            f.flush()
+
+            with pytest.raises(ConfigurationError, match="Invalid JSON"):
+                ServerConfig.from_file(f.name)
+
+        os.unlink(f.name)
+
+    def test_config_from_file_not_found(self):
+        """Test configuration loading with non-existent file"""
+        with pytest.raises(ConfigurationError, match="Config file not found"):
+            ServerConfig.from_file("/non/existent/file.json")
+
+    def test_config_save_file_error(self):
+        """Test configuration saving with permission error"""
+        config = ServerConfig()
+
+        # Mock open to raise PermissionError
+        with patch("builtins.open", side_effect=PermissionError("Permission denied")):
+            with pytest.raises(PermissionError):
+                config.save_to_file("/test/path.json")
+
+    def test_config_from_env_with_all_variables(self):
+        """Test loading config from environment with all variables set"""
+        env_vars = {
+            "NOTEBOOKLM_HEADLESS": "true",
+            "NOTEBOOKLM_TIMEOUT": "120",
+            "NOTEBOOKLM_DEBUG": "true",
+            "NOTEBOOKLM_NOTEBOOK_ID": "test-notebook-id",
+            "NOTEBOOKLM_COOKIES_PATH": "/path/to/cookies",
+            "NOTEBOOKLM_PROFILE_DIR": "/custom/profile",
+            "NOTEBOOKLM_PERSISTENT_SESSION": "false",
+        }
+
+        with patch.dict(os.environ, env_vars, clear=True):
+            config = ServerConfig.from_env()
+            assert config.headless is True
+            assert config.timeout == 120
+            assert config.debug is True
+            assert config.default_notebook_id == "test-notebook-id"
+            assert config.auth.cookies_path == "/path/to/cookies"
+            assert config.auth.profile_dir == "/custom/profile"
+            assert config.auth.use_persistent_session is False
             assert config.headless is True

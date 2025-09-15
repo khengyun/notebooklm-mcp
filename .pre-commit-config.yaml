@@ -27,8 +27,10 @@ repos:
   - id: flake8
     additional_dependencies: [flake8-docstrings]
 
-- repo: https://github.com/pre-commit/mirrors-mypy
-  rev: v1.5.1
-  hooks:
-  - id: mypy
-    additional_dependencies: [types-all]
+# Mypy hook disabled due to types-all dependency conflicts
+# Use: task lint:mypy for manual mypy checking
+# - repo: https://github.com/pre-commit/mirrors-mypy
+#   rev: v1.5.1
+#   hooks:
+#   - id: mypy
+#     additional_dependencies: [types-all]

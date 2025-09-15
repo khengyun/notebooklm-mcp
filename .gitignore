@@ -195,3 +195,4 @@ scratch_*.py
 
 # VS Code workspace files
 *.code-workspace
+notebooklm-config.json

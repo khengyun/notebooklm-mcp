@@ -31,7 +31,7 @@ def test_config_validation():
 
 **⚠️ CRITICAL RULE: NO FUNCTION CHANGES WITHOUT TESTS**
 
-1. **ANY function modification** → MUST run `task enforce:test` 
+1. **ANY function modification** → MUST run `task enforce:test`
 2. **Coverage requirement**: ≥95% or change is REJECTED
 3. **All tests must pass** before function changes are accepted
 4. **Breaking changes** require integration test validation
@@ -49,7 +49,7 @@ We use [Taskfile.dev](https://taskfile.dev/) instead of Makefile for better cros
 ```bash
 # Quick commands (memorize these)
 task                    # Show all tasks
-task test:quick        # Single test validation  
+task test:quick        # Single test validation
 task test:unit         # Full unit test suite
 task test:coverage     # Coverage validation (≥95%)
 task dev:check         # Pre-commit validation
@@ -82,7 +82,7 @@ development_environment = {
 ### **�💾 Memory Documentation:**
 **ALWAYS** store significant findings in Memory MCP server:
 - Bug solutions and patterns
-- Architecture decisions and rationale  
+- Architecture decisions and rationale
 - Performance results and configurations
 - Research insights and SOTA techniques
 - **USER WORKFLOW PATTERNS** (new requirement)
@@ -100,20 +100,20 @@ flowchart TD
     B -->|Complex/Design| C[🧠 Sequential Thinking]
     B -->|Research Needed| D[📚 DeepWiki Multi-Repo Search]
     B -->|Web Info| E[🌐 Fetch Webpage]
-    
+
     C --> F[💾 Store Insights in Memory]
     D --> F
     E --> F
-    
+
     F --> G{Documentation Needed?}
     G -->|Yes| H[📝 Markitdown + Context7]
     G -->|Code Analysis| I[� Pylance Analysis]
-    
+
     H --> J[🏗️ Infrastructure?]
     I --> J
     J -->|Terraform/Cloud| K[☁️ Hashicorp Tools]
     J -->|Development| L[🛠️ Implementation]
-    
+
     K --> M[💾 Store ALL Results]
     L --> M
     M --> N[📊 Generate Diagrams]
@@ -153,7 +153,7 @@ flowchart TD
 1. 🧠 mcp_sequentialthi_sequentialthinking()         # Strategic planning
 2. 📚 mcp_deepwiki_ask_question() [MULTIPLE REPOS]   # SOTA research
    - microsoft/autogen, huggingface/transformers
-   - pytorch/pytorch, facebookresearch/fairseq  
+   - pytorch/pytorch, facebookresearch/fairseq
 3. 🌐 fetch_webpage() [LATEST TRENDS]                # Current developments
 4. 📊 mcp_context7_get_library_docs()                # Official documentation
 5. 🔍 mcp_pylance_mcp_s_pylanceImports()             # Code analysis
@@ -215,7 +215,7 @@ flowchart TD
 problem_solving_matrix = {
     "technical_research": [
         "mcp_deepwiki_ask_question",      # GitHub repos
-        "arxiv_search",                   # Academic papers  
+        "arxiv_search",                   # Academic papers
         "mcp_context7_get_library_docs",  # Official docs
         "stackoverflow_search"            # Community solutions
     ],
@@ -252,22 +252,22 @@ problem_solving_matrix = {
 enhancement_pipeline = [
     # 1. DISCOVERY PHASE
     ["sequential_thinking", "deepwiki_research", "web_search"],
-    
-    # 2. ANALYSIS PHASE  
+
+    # 2. ANALYSIS PHASE
     ["pylance_analysis", "security_scanning", "performance_profiling"],
-    
+
     # 3. IMPLEMENTATION PHASE
     ["code_generation", "testing_automation", "documentation"],
-    
+
     # 4. DEPLOYMENT PHASE
     ["infrastructure_provisioning", "ci_cd_pipeline", "monitoring_setup"],
-    
+
     # 5. VALIDATION PHASE
     ["quality_assurance", "security_audit", "performance_testing"],
-    
+
     # 6. STORAGE PHASE
     ["memory_storage", "knowledge_indexing", "best_practices_capture"],
-    
+
     # 7. FEEDBACK PHASE
     ["metrics_analysis", "improvement_identification", "cycle_restart"]
 ]
@@ -279,13 +279,13 @@ enhancement_pipeline = [
 
 **By leveraging the COMPLETE MCP ecosystem, every development session will:**
 
-✅ **Research Phase**: Multi-source intelligence gathering  
-✅ **Analysis Phase**: Comprehensive code and security scanning  
-✅ **Implementation Phase**: Best practices and automation  
-✅ **Deployment Phase**: Infrastructure as code and monitoring  
-✅ **Documentation Phase**: Auto-generated, format-converted docs  
-✅ **Storage Phase**: Persistent knowledge and decision tracking  
-✅ **Communication Phase**: Automated notifications and reporting  
+✅ **Research Phase**: Multi-source intelligence gathering
+✅ **Analysis Phase**: Comprehensive code and security scanning
+✅ **Implementation Phase**: Best practices and automation
+✅ **Deployment Phase**: Infrastructure as code and monitoring
+✅ **Documentation Phase**: Auto-generated, format-converted docs
+✅ **Storage Phase**: Persistent knowledge and decision tracking
+✅ **Communication Phase**: Automated notifications and reporting
 ✅ **Iteration Phase**: Continuous improvement with feedback loops
 
 ### **🔥 KEY INTEGRATION RULES**
@@ -313,7 +313,7 @@ enhancement_pipeline = [
 # MANDATORY SEQUENCE - Use ALL tools
 1. 🧠 mcp_sequentialthi_sequentialthinking()  # Plan approach
 2. 📚 mcp_deepwiki_ask_question()              # Research multiple repos
-3. 🌐 fetch_webpage()                          # Get latest trends  
+3. 🌐 fetch_webpage()                          # Get latest trends
 4. 💾 mcp_memory_create_entities()             # Store findings
 5. 📊 mcp_context7_get_library_docs()          # Best practices
 6. � mcp_markitdown_convert_to_markdown()     # Documentation
@@ -325,7 +325,7 @@ enhancement_pipeline = [
 ```python
 # COMPREHENSIVE CODE REVIEW
 1. 🔍 mcp_pylance_mcp_s_pylanceFileSyntaxErrors()    # Syntax check
-2. 🔍 mcp_pylance_mcp_s_pylanceImports()             # Import analysis  
+2. 🔍 mcp_pylance_mcp_s_pylanceImports()             # Import analysis
 3. 🧠 mcp_sequentialthi_sequentialthinking()         # Plan improvements
 4. 📚 mcp_deepwiki_ask_question()                    # Research patterns
 5. 📊 mcp_context7_resolve_library_id()              # Get docs
@@ -355,7 +355,7 @@ enhancement_pipeline = [
 # NEVER work without research
 research_sources = [
     "mcp_deepwiki_ask_question()",      # Multiple GitHub repos
-    "fetch_webpage()",                   # Web trends/docs  
+    "fetch_webpage()",                   # Web trends/docs
     "mcp_context7_get_library_docs()",   # Official docs
     "mcp_memory_search_nodes()"          # Existing knowledge
 ]
@@ -400,7 +400,7 @@ documentation_pipeline = [
 
 ### **� Recursive Enhancement Loop**
 1. **Research** → DeepWiki + Fetch Webpage + Context7
-2. **Analyze** → Sequential Thinking + Pylance + Memory Search  
+2. **Analyze** → Sequential Thinking + Pylance + Memory Search
 3. **Implement** → Best practices from research
 4. **Document** → Markitdown + Mermaid diagrams
 5. **Store** → Memory with observations
@@ -413,7 +413,7 @@ documentation_pipeline = [
 # COMPREHENSIVE approach to ANY problem
 problem_dimensions = {
     "technical": "mcp_deepwiki + pylance + context7",
-    "architectural": "sequential_thinking + memory",  
+    "architectural": "sequential_thinking + memory",
     "documentation": "markitdown + mermaid_diagrams",
     "deployment": "hashicorp_terraform + web_research",
     "knowledge": "memory_storage + cross_referencing"
@@ -438,7 +438,7 @@ problem_dimensions = {
 
 **By following these comprehensive workflows, every task will:**
 - ✅ **Leverage ALL available knowledge sources**
-- ✅ **Apply systematic thinking methodology** 
+- ✅ **Apply systematic thinking methodology**
 - ✅ **Store learnings for future reference**
 - ✅ **Generate professional documentation**
 - ✅ **Follow industry best practices**
@@ -457,12 +457,12 @@ flowchart TD
     B -->|Process Flow| D[Use sequenceDiagram]
     B -->|Performance| E[Use flowchart with subgraphs]
     B -->|Timeline| F[Use gitGraph or timeline]
-    
+
     C --> G[Apply classDef for styling]
     D --> G
     E --> G
     F --> G
-    
+
     G --> H[Validate syntax with Context7]
     H --> I[Create clear, readable diagrams]
 ```
@@ -499,7 +499,7 @@ notebooklm-mcp chat --notebook YOUR_NOTEBOOK_ID
 
 # 3. Manual login ONCE (browser opens automatically)
 # - Login with Google account
-# - Navigate to notebook 
+# - Navigate to notebook
 # - Wait for complete load
 # - Press Enter in terminal
 
@@ -595,26 +595,26 @@ flowchart TD
     subgraph Client["🔵 Client Layer"]
         A[MCP Client<br/>AutoGen/Python] --> B[STDIO Protocol<br/>JSON-RPC 2.0]
     end
-    
+
     subgraph Server["🎯 MCP Server"]
         C[MCP Server<br/>notebooklm-mcp]
         D[Tool Registry<br/>8 available tools]
         E[Configuration<br/>ServerConfig]
     end
-    
-    subgraph Browser["🌐 Browser Automation"] 
+
+    subgraph Browser["🌐 Browser Automation"]
         F[Chrome Driver<br/>undetected-chromedriver]
         G[Session Manager<br/>Persistent profiles]
         H[DOM Handler<br/>Smart selectors]
         I[Anti-Detection<br/>Stealth mode]
     end
-    
+
     subgraph NotebookLM["🤖 NotebookLM Service"]
         J[Google Login<br/>OAuth flow]
         K[Notebook Interface<br/>Chat & Documents]
         L[AI Response<br/>Streaming LLM]
     end
-    
+
     B --> C
     C --> D
     C --> E
@@ -622,16 +622,16 @@ flowchart TD
     F --> G
     F --> H
     F --> I
-    
+
     G --> J
     H --> K
     I --> L
-    
+
     classDef client fill:#e1f5fe
     classDef server fill:#fff3e0
     classDef browser fill:#c8e6c9
     classDef notebooklm fill:#f3e5f5
-    
+
     class A,B client
     class C,D,E server
     class F,G,H,I browser
@@ -658,7 +658,7 @@ async def chat_with_notebook(message: str) -> AsyncIterator[str]:
         yield chunk
 ```
 
-## 🎯 **Token Efficiency Guidelines** 
+## 🎯 **Token Efficiency Guidelines**
 
 ### **❌ NEVER Do These (Token Wasters):**
 - Rewrite entire files when only 2-3 lines need fixing
@@ -785,7 +785,7 @@ async def chat_with_notebook(message: str) -> AsyncIterator[str]:
 ```python
 # Core entity types for NotebookLM MCP Server
 "automation_pattern"    # Browser automation sequences and DOM selectors
-"bug_solution"          # Error patterns and fixes  
+"bug_solution"          # Error patterns and fixes
 "architecture_decision" # Design choices and rationale
 "research_insight"      # MCP server best practices and integration patterns
 "code_pattern"          # Reusable implementations
@@ -808,7 +808,7 @@ if significant_finding:
 # AFTER work completion - MANDATORY storage
 mcp_memory_create_entities([{
     "entityType": "appropriate_type",
-    "name": "descriptive_name_with_date", 
+    "name": "descriptive_name_with_date",
     "observations": [result_summary, key_insights, recommendations]
 }])
 ```
@@ -817,7 +817,7 @@ mcp_memory_create_entities([{
 ```
 MOE-Gym/
 ├── CIFAR10/model.py     # Dense MoE architecture
-├── CIFAR10/data.py      # Data loading & preprocessing  
+├── CIFAR10/data.py      # Data loading & preprocessing
 ├── CIFAR10/train.py     # Training loops
 ├── CIFAR10/run.py       # CLI interface
 ├── CIFAR10-Sparse/     # NEW: Sparse MoE implementation
@@ -838,16 +838,16 @@ flowchart LR
     subgraph Dense["🔴 Dense MoE"]
         D1[4 Experts<br/>100% Active] --> D2[43% Accuracy<br/>100% FLOPs]
     end
-    
-    subgraph Sparse["🔵 Sparse MoE"] 
+
+    subgraph Sparse["🔵 Sparse MoE"]
         S1[4 Experts<br/>k=2 Active] --> S2[35% Accuracy<br/>50% FLOPs]
         S3[8 Experts<br/>k=3 Active] --> S4[37% Accuracy<br/>37.5% FLOPs]
     end
-    
+
     subgraph Optimal["⭐ Sweet Spot"]
         O1[4 Experts, k=2<br/>Best efficiency] --> O2[7.9% accuracy loss<br/>50% compute savings]
     end
-    
+
     classDef dense fill:#ffcdd2
     classDef sparse fill:#c8e6c9
     classDef optimal fill:#fff3e0
@@ -866,7 +866,7 @@ if significant_finding:
 # AFTER work completion - MANDATORY storage
 mcp_memory_create_entities([{
     "entityType": "appropriate_type",
-    "name": "descriptive_name_with_date", 
+    "name": "descriptive_name_with_date",
     "observations": [result_summary, key_insights, recommendations]
 }])
 ```
@@ -955,11 +955,11 @@ flowchart LR
     A --> C[images/<br/>Performance graphs]
     B --> D[Architecture diagrams<br/>Development workflows]
     C --> E[Validation results<br/>Training dynamics]
-    
+
     classDef readme fill:#e3f2fd
     classDef instructions fill:#f3e5f5
     classDef images fill:#e8f5e8
-    
+
     class A readme
     class B instructions
     class C images

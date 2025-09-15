@@ -64,8 +64,8 @@ class NotebookLMClient:
             logger.warning(
                 "undetected-chromedriver not available, using regular Selenium"
             )
-        # Fallback implementation with regular ChromeDriver
-        self._start_regular_chrome()
+            # Fallback implementation with regular ChromeDriver
+            self._start_regular_chrome()
 
         if self.driver is None:
             raise RuntimeError("Failed to initialize browser driver")

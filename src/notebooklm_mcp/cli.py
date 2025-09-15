@@ -3,7 +3,10 @@ Command-line interface for NotebookLM MCP Server
 """
 
 import asyncio
+import json
+import re
 import sys
+from pathlib import Path
 from typing import Optional
 
 import click
@@ -12,10 +15,79 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .client import NotebookLMClient
-from .config import ServerConfig, load_config
+from .config import AuthConfig, ServerConfig, load_config
+from .exceptions import ConfigurationError
 from .server import NotebookLMServer
 
 console = Console()
+
+
+def extract_notebook_id(url: str) -> str:
+    """Extract notebook ID from NotebookLM URL"""
+    # Pattern to match NotebookLM URL with notebook ID
+    patterns = [
+        r"https://notebooklm\.google\.com/notebook/([a-f0-9-]{36})",
+        r"notebooklm\.google\.com/notebook/([a-f0-9-]{36})",
+        r"([a-f0-9-]{36})",  # Just the ID itself
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+
+    raise ValueError(f"Invalid NotebookLM URL or ID: {url}")
+
+
+def create_default_config(
+    notebook_id: str, config_path: str = "notebooklm-config.json"
+) -> None:
+    """Create default configuration file"""
+    config = {
+        "headless": False,
+        "debug": False,
+        "timeout": 60,
+        "default_notebook_id": notebook_id,
+        "base_url": "https://notebooklm.google.com",
+        "server_name": "notebooklm-mcp",
+        "stdio_mode": True,
+        "streaming_timeout": 60,
+        "response_stability_checks": 3,
+        "retry_attempts": 3,
+        "auth": {
+            "cookies_path": None,
+            "profile_dir": "./chrome_profile_notebooklm",
+            "use_persistent_session": True,
+            "auto_login": True,
+        },
+    }
+
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    console.print(f"✅ Created config file: [bold green]{config_path}[/bold green]")
+
+
+def update_config_to_headless(config_path: str = "notebooklm-config.json") -> None:
+    """Update config file to set headless=true after successful setup"""
+    try:
+        # Read current config
+        with open(config_path, "r") as f:
+            config = json.load(f)
+
+        # Update headless setting
+        config["headless"] = True
+
+        # Write back to file
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+
+        console.print(
+            "✅ Updated config: [bold yellow]headless=true[/bold yellow] for optimal performance"
+        )
+
+    except Exception as e:
+        console.print(f"⚠️  Failed to update config to headless mode: {e}")
 
 
 @click.group()
@@ -36,6 +108,92 @@ def cli(ctx: click.Context, config: Optional[str], debug: bool) -> None:
         ctx.obj["config"] = server_config
     except Exception as e:
         console.print(f"[red]Configuration error: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("notebook_url")
+@click.option(
+    "--config-path",
+    "-o",
+    default="notebooklm-config.json",
+    help="Output config file path",
+)
+@click.option("--headless", is_flag=True, help="Run initial setup in headless mode")
+def init(notebook_url: str, config_path: str, headless: bool) -> None:
+    """Initialize NotebookLM MCP Server with notebook URL
+
+    NOTEBOOK_URL: NotebookLM notebook URL or ID
+
+    Examples:
+        notebooklm-mcp init https://notebooklm.google.com/notebook/4741957b-f358-48fb-a16a-da8d20797bc6
+        notebooklm-mcp init 4741957b-f358-48fb-a16a-da8d20797bc6
+    """
+    try:
+        # Extract notebook ID from URL
+        notebook_id = extract_notebook_id(notebook_url)
+
+        console.print(
+            Panel.fit(
+                f"[bold blue]🚀 Initializing NotebookLM MCP Server[/bold blue]\n"
+                f"Notebook ID: [green]{notebook_id}[/green]\n"
+                f"Config File: [yellow]{config_path}[/yellow]",
+                title="Setup Starting",
+            )
+        )
+
+        # Create config file
+        create_default_config(notebook_id, config_path)
+
+        # Create profile directory
+        profile_dir = Path("./chrome_profile_notebooklm")
+        profile_dir.mkdir(exist_ok=True)
+        console.print(
+            f"✅ Created profile directory: [bold green]{profile_dir}[/bold green]"
+        )
+
+        # Guided setup
+        console.print("\n[bold yellow]🔧 Setting up browser profile...[/bold yellow]")
+
+        # Create temporary config for guided setup
+        temp_config = ServerConfig(
+            default_notebook_id=notebook_id,
+            headless=headless,
+            debug=False,
+            auth=AuthConfig(
+                profile_dir=str(profile_dir),
+                use_persistent_session=True,
+                auto_login=True,
+            ),
+        )
+
+        # Run guided setup
+        setup_success = asyncio.run(guided_setup(temp_config))
+
+        # Update config to headless if setup was successful
+        if setup_success:
+            update_config_to_headless(config_path)
+            console.print(
+                "\n[bold blue]🚀 Optimization:[/bold blue] Config updated to [yellow]headless=true[/yellow] for better performance"
+            )
+
+        console.print(
+            Panel.fit(
+                "[bold green]✅ Setup Complete![/bold green]\n\n"
+                f"Config file: [yellow]{config_path}[/yellow]\n"
+                f"Profile directory: [yellow]{profile_dir}[/yellow]\n"
+                f"Headless mode: [yellow]{'✅ Enabled' if setup_success else '❌ Disabled'}[/yellow]\n\n"
+                "[bold blue]Next steps:[/bold blue]\n"
+                f"notebooklm-mcp --config {config_path} server",
+                title="🎉 Ready to Use",
+            )
+        )
+
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Setup failed: {e}[/red]")
         sys.exit(1)
 
 
@@ -158,6 +316,253 @@ def chat(
 
 
 @cli.command()
+@click.option("--config", "-c", required=True, help="Configuration file path")
+@click.option("--notebook", "-n", required=True, help="Notebook ID")
+@click.option("--profile", "-p", help="Path to existing Chrome profile to import")
+@click.option("--headless", is_flag=True, help="Run in headless mode")
+@click.option(
+    "--setup-only", is_flag=True, help="Only create config, don't run browser"
+)
+@click.pass_context
+def quick_setup(
+    ctx: click.Context,
+    config: str,
+    notebook: str,
+    profile: Optional[str],
+    headless: bool,
+    setup_only: bool,
+) -> None:
+    """Quick setup with config file and optional profile import"""
+
+    async def run_setup():
+        try:
+            # Step 1: Create enhanced config
+            console.print("📋 Step 1: Creating configuration...")
+            server_config = ServerConfig(
+                default_notebook_id=notebook,
+                headless=headless,
+                auth=AuthConfig(
+                    import_profile_from=profile,
+                    skip_manual_login=bool(
+                        profile
+                    ),  # Skip manual login if profile provided
+                ),
+            )
+
+            # Step 2: Setup profile
+            console.print("🔧 Step 2: Setting up Chrome profile...")
+            server_config.setup_profile()
+
+            # Step 3: Save config
+            console.print("💾 Step 3: Saving configuration...")
+            server_config.save_to_file(config)
+
+            console.print(
+                Panel.fit(
+                    f"[bold green]✅ Configuration Complete![/bold green]\n\n"
+                    f"📁 Config saved to: {config}\n"
+                    f"📝 Notebook ID: {notebook}\n"
+                    f"🔧 Profile: {'Imported' if profile else 'New'}\n"
+                    f"👀 Mode: {'Headless' if headless else 'GUI'}",
+                    title="📋 Config Ready",
+                )
+            )
+
+            # Step 4: Initialize and test browser (unless setup-only)
+            if not setup_only:
+                console.print("\n🌐 Step 4: Testing browser connection...")
+
+                # Import client here to avoid circular imports
+                from .client import NotebookLMClient
+
+                # Create client
+                client = NotebookLMClient(server_config)
+
+                try:
+                    # Start browser
+                    console.print("🔄 Starting browser...")
+                    await client.start()
+                    console.print("✅ Browser started successfully!")
+
+                    # Test authentication
+                    console.print("🔐 Testing authentication...")
+                    auth_success = await client.authenticate()
+
+                    if auth_success:
+                        console.print(
+                            "✅ Authentication successful - no manual login needed!"
+                        )
+                        console.print(
+                            Panel.fit(
+                                f"[bold green]🎉 Complete Setup Success![/bold green]\n\n"
+                                f"Your NotebookLM MCP server is ready to use!\n\n"
+                                f"[yellow]Start server:[/yellow]\n"
+                                f"notebooklm-mcp server -c {config}\n\n"
+                                f"[yellow]Start interactive chat:[/yellow]\n"
+                                f"notebooklm-mcp chat -c {config}",
+                                title="🚀 Ready to Use!",
+                            )
+                        )
+                    else:
+                        console.print("⚠️ Manual login required")
+                        console.print(
+                            Panel.fit(
+                                "[yellow]Manual Login Needed[/yellow]\n\n"
+                                "Browser is open for you to login manually.\n"
+                                "1. Complete Google login in the browser\n"
+                                "2. Navigate to your notebook\n"
+                                "3. Press Enter when ready...",
+                                title="🔐 Login Required",
+                            )
+                        )
+
+                        # Wait for user to complete login
+                        input("\nPress Enter after completing login...")
+
+                        # Test again
+                        auth_success = await client.authenticate()
+                        if auth_success:
+                            console.print(
+                                "✅ Login successful! Session saved for future use."
+                            )
+                        else:
+                            console.print(
+                                "⚠️ Authentication still pending - you can try again later"
+                            )
+
+                        console.print(
+                            Panel.fit(
+                                f"[bold green]✅ Setup Complete![/bold green]\n\n"
+                                f"[yellow]Your session is now saved![/yellow]\n"
+                                f"Future runs will auto-authenticate.\n\n"
+                                f"[yellow]Start server:[/yellow]\n"
+                                f"notebooklm-mcp server -c {config}",
+                                title="🎉 Setup Complete!",
+                            )
+                        )
+
+                except Exception as e:
+                    console.print(f"⚠️ Browser test failed: {e}")
+                    console.print(
+                        "Config created successfully, but browser needs manual setup"
+                    )
+
+                finally:
+                    # Clean up
+                    try:
+                        await client.close()
+                        console.print("🔄 Browser closed")
+                    except Exception:
+                        pass
+            else:
+                # Setup-only mode
+                console.print(
+                    Panel.fit(
+                        f"[bold green]✅ Config-Only Setup Complete![/bold green]\n\n"
+                        f"📁 Configuration saved to: {config}\n\n"
+                        f"[yellow]Next steps:[/yellow]\n"
+                        f"• notebooklm-mcp server -c {config}\n"
+                        f"• notebooklm-mcp chat -c {config}",
+                        title="📋 Config Ready",
+                    )
+                )
+
+        except Exception as e:
+            console.print(f"[red]Setup failed: {e}[/red]")
+            import traceback
+
+            console.print(f"[red]Details: {traceback.format_exc()}[/red]")
+            sys.exit(1)
+
+    # Run async setup
+    import asyncio
+
+    asyncio.run(run_setup())
+
+
+@cli.command()
+@click.option("--from-profile", "-f", required=True, help="Source Chrome profile path")
+@click.option("--to-profile", "-t", required=True, help="Destination profile path")
+@click.pass_context
+def import_profile(ctx: click.Context, from_profile: str, to_profile: str) -> None:
+    """Import existing Chrome profile"""
+
+    try:
+        from pathlib import Path
+        from shutil import copytree, rmtree
+
+        source = Path(from_profile)
+        dest = Path(to_profile)
+
+        if not source.exists():
+            raise ConfigurationError(f"Source profile not found: {source}")
+
+        if dest.exists():
+            console.print(f"[yellow]Removing existing profile: {dest}[/yellow]")
+            rmtree(dest)
+
+        copytree(source, dest)
+
+        console.print(
+            Panel.fit(
+                f"[bold green]✅ Profile Import Complete![/bold green]\n\n"
+                f"📁 From: {source}\n"
+                f"📁 To: {dest}\n\n"
+                f"[yellow]You can now use this profile in your config:[/yellow]\n"
+                f'  "auth": {{\n'
+                f'    "profile_dir": "{dest}",\n'
+                f'    "use_persistent_session": true\n'
+                f"  }}",
+                title="📥 Profile Imported",
+            )
+        )
+
+    except Exception as e:
+        console.print(f"[red]Import failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
+@click.option("--profile", "-p", help="Profile path to export from (default: current)")
+@click.option("--to", "-t", required=True, help="Export destination path")
+@click.pass_context
+def export_profile(ctx: click.Context, profile: Optional[str], to: str) -> None:
+    """Export Chrome profile for sharing"""
+    config: ServerConfig = ctx.obj["config"]
+
+    source_profile = profile or config.auth.profile_dir
+
+    try:
+        from pathlib import Path
+        from shutil import copytree, rmtree
+
+        source = Path(source_profile)
+        dest = Path(to)
+
+        if not source.exists():
+            raise ConfigurationError(f"Source profile not found: {source}")
+
+        if dest.exists():
+            rmtree(dest)
+
+        copytree(source, dest)
+
+        console.print(
+            Panel.fit(
+                f"[bold green]✅ Profile Export Complete![/bold green]\n\n"
+                f"📁 From: {source}\n"
+                f"📁 To: {dest}\n\n"
+                f"[yellow]Share this profile with others for quick setup![/yellow]",
+                title="📤 Profile Exported",
+            )
+        )
+
+    except Exception as e:
+        console.print(f"[red]Export failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
 @click.pass_context
 def config_show(ctx: click.Context) -> None:
     """Show current configuration"""
@@ -223,6 +628,84 @@ def test(ctx: click.Context, notebook: str, headless: bool) -> None:
     except Exception as e:
         console.print(f"[red]Test error: {e}[/red]")
         sys.exit(1)
+
+
+async def guided_setup(config: ServerConfig) -> bool:
+    """Guided setup flow for first-time users
+
+    Returns:
+        bool: True if setup was successful, False otherwise
+    """
+    console.print("[bold blue]🔧 Setting up browser and profile...[/bold blue]")
+
+    client = NotebookLMClient(config)
+    setup_success = False
+
+    try:
+        # Start browser
+        console.print("[yellow]Starting browser...[/yellow]")
+        await client.start()
+        console.print("✅ Browser started successfully")
+
+        # Navigate to notebook for authentication
+        if not config.default_notebook_id:
+            raise ValueError("No notebook ID configured")
+
+        console.print(
+            f"[yellow]Navigating to notebook: {config.default_notebook_id}[/yellow]"
+        )
+        await client.navigate_to_notebook(config.default_notebook_id)
+
+        # Check if already authenticated
+        auth_success = await client.authenticate()
+
+        if not auth_success:
+            console.print(
+                Panel.fit(
+                    "[bold yellow]📋 Manual Login Required[/bold yellow]\n\n"
+                    "Please complete the following steps:\n"
+                    "1. 🔐 Login with your Google account in the browser\n"
+                    "2. ✅ Ensure you can access the notebook\n"
+                    "3. ⏱️  Wait for the page to fully load\n"
+                    "4. ⌨️  Press Enter when ready...",
+                    title="🔑 Authentication Setup",
+                )
+            )
+
+            if not config.headless:
+                input("\nPress Enter when login is complete...")
+
+            # Verify authentication after manual login
+            auth_success = await client.authenticate()
+
+            if auth_success:
+                console.print("✅ Authentication successful!")
+            else:
+                console.print(
+                    "⚠️  Authentication verification failed, but profile was saved"
+                )
+        else:
+            console.print("✅ Already authenticated!")
+
+        # Test basic functionality
+        console.print("[yellow]Testing basic functionality...[/yellow]")
+        try:
+            await client.send_message("Hello, this is a test message from setup.")
+            console.print("✅ Chat functionality working")
+            setup_success = True  # Mark as successful
+        except Exception as e:
+            console.print(f"⚠️  Chat test failed: {e}")
+            setup_success = auth_success  # Success if at least authenticated
+
+        console.print("[bold green]✅ Browser profile setup complete![/bold green]")
+        return setup_success
+
+    except Exception as e:
+        console.print(f"[red]Setup error: {e}[/red]")
+        raise
+    finally:
+        if client:
+            await client.close()
 
 
 def main() -> None:

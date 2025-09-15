@@ -7,79 +7,123 @@
 [![Tests](https://github.com/khengyun/notebooklm-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/khengyun/notebooklm-mcp/actions)
 [![codecov](https://codecov.io/gh/khengyun/notebooklm-mcp/graph/badge.svg)](https://codecov.io/gh/khengyun/notebooklm-mcp)
 
-Professional **Model Context Protocol (MCP) server** for automating interactions with Google's **NotebookLM**. Features persistent browser sessions, streaming response support, and comprehensive automation capabilities.
+Professional **Model Context Protocol (MCP) server** for automating interactions with Google's **NotebookLM**.
+
+## 🚀 **Quick Start (2 Commands)**
+
+### **Step 1: Initialize**
+
+```bash
+notebooklm-mcp init https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID
+```
+
+**What this does:**
+
+- ✅ Extracts notebook ID from URL
+- ✅ Creates `notebooklm-config.json`
+- ✅ Sets up browser profile
+- ✅ Tests authentication
+- ✅ Optimizes for headless mode
+
+### **Step 2: Start Server**
+
+```bash
+notebooklm-mcp --config notebooklm-config.json server
+```
+
+**That's it!** Your MCP server is ready for AutoGen, Copilot, or any MCP client.
+
+---
+
+## 📦 **Installation**
+
+```bash
+pip install notebooklm-mcp
+```
 
 ## ✨ **Key Features**
 
-### 🚀 **Advanced Automation**
-- **Persistent Browser Sessions** - Login once, auto-authenticate forever
-- **Streaming Response Support** - Proper handling of LLM streaming responses  
-- **Multiple Chat Methods** - Send/receive individually or combined operations
-- **Anti-Detection Bypassing** - Uses `undetected-chromedriver` for Google compatibility
-- **Smart DOM Interaction** - Intelligent selectors with multiple fallbacks
-- **Comprehensive Error Handling** - Robust fallbacks and detailed logging
+- **🔐 One-time setup** - Login once, auto-authenticate forever
+- **🚀 MCP Protocol** - Works with AutoGen, GitHub Copilot, and all MCP clients
+- **⚡ Streaming Support** - Real-time AI response handling
+- **🛡️ Anti-Detection** - Uses `undetected-chromedriver` for Google compatibility
+- **📱 Headless Mode** - Optimized for production deployment
 
-### 💬 **Chat Operations**
-| Method | Description | Streaming | Use Case |
-|--------|-------------|-----------|----------|
-| `send_message` | Send chat message | ❌ | Quick message sending |
-| `get_response` | Get complete response | ✅ | Wait for full AI response |
-| `get_quick_response` | Get current response | ⚡ | Immediate response check |
-| `chat_with_notebook` | Combined send + receive | ✅ | One-shot conversations |
+## 💻 **MCP Integration Examples**
 
-### 📚 **Notebook Management** 
-- Navigate to specific notebooks
-- Upload documents to notebooks  
-- List available notebooks
-- Create new notebooks
-- Search within notebooks
-- Export conversation history
+### **AutoGen Integration**
 
-## 🚀 **Quick Start**
+```python
+from autogen_ext.tools.mcp import McpWorkbench, StdioServerParams
 
-### **Installation**
+# Configure MCP server with correct syntax
+params = StdioServerParams(
+    command="notebooklm-mcp",
+    args=["--config", "notebooklm-config.json", "server", "--headless"]
+)
 
-```bash
-# Install from PyPI
-pip install notebooklm-mcp
+# Create MCP workbench
+workbench = McpWorkbench(params)
 
-# Or install from source
-git clone https://github.com/notebooklm-mcp/notebooklm-mcp.git
-cd notebooklm-mcp
-pip install -e .
+# Use tools
+await workbench.call_tool("chat_with_notebook", {
+    "message": "Analyze the main themes in this research paper",
+    "max_wait": 60
+})
 ```
 
-### **One-Time Setup** 
+### **GitHub Copilot Integration**
 
-```bash
-# First run - opens browser for manual login
-notebooklm-mcp chat --notebook YOUR_NOTEBOOK_ID
+Add to your VS Code `settings.json`:
 
-# Login manually when browser opens
-# Session automatically saved for future runs ✨
+```json
+{
+  "github.copilot.advanced": {
+    "mcp": {
+      "servers": {
+        "notebooklm": {
+          "command": "notebooklm-mcp",
+          "args": ["--config", "notebooklm-config.json", "server", "--headless"]
+        }
+      }
+    }
+  }
+}
 ```
 
-### **Start MCP Server**
+## 🛠️ **MCP Tools Available**
+
+| Tool | Arguments | Description |
+|------|-----------|-------------|
+| `healthcheck` | None | Server health status |
+| `send_chat_message` | `message: str` | Send message to NotebookLM |
+| `get_chat_response` | `wait_for_completion: bool`, `max_wait: int` | Get response with streaming |
+| `get_quick_response` | None | Get current response immediately |
+| `chat_with_notebook` | `message: str`, `max_wait: int` | Combined send + receive |
+| `navigate_to_notebook` | `notebook_id: str` | Navigate to specific notebook |
+
+## 🐳 **Docker Deployment**
 
 ```bash
-# Start server with your notebook
-notebooklm-mcp server --notebook 4741957b-f358-48fb-a16a-da8d20797bc6 --headless
+# Quick start with Docker
+docker run -e NOTEBOOKLM_NOTEBOOK_ID="YOUR_ID" notebooklm-mcp
 
-# Or use environment variables
-export NOTEBOOKLM_NOTEBOOK_ID="your-notebook-id"
-export NOTEBOOKLM_HEADLESS="true"
-notebooklm-mcp server
+# Or use docker-compose
+docker-compose up -d
 ```
 
-### **Interactive Chat**
+## 📄 **License**
 
-```bash
-# Interactive chat session
-notebooklm-mcp chat --notebook your-notebook-id
+MIT License - see [LICENSE](LICENSE) file for details.
 
-# Send single message
-notebooklm-mcp chat --notebook your-notebook-id --message "Summarize this document"
-```
+## 🆘 **Support**
+
+- **Issues**: [GitHub Issues](https://github.com/khengyun/notebooklm-mcp/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/khengyun/notebooklm-mcp/discussions)
+
+---
+
+**⭐ If this project helps you, please give it a star!**
 
 ## 📖 **Usage Examples**
 
@@ -96,22 +140,22 @@ async def main():
         headless=True,
         debug=True
     )
-    
+
     client = NotebookLMClient(config)
-    
+
     try:
         # Start browser with persistent session
         await client.start()
-        
+
         # Authenticate (automatic with saved session)
         await client.authenticate()
-        
+
         # Send message and get streaming response
         await client.send_message("What are the key insights from this document?")
         response = await client.get_response(wait_for_completion=True)
-        
+
         print(f"NotebookLM: {response}")
-        
+
     finally:
         await client.close()
 
@@ -147,7 +191,7 @@ await workbench.call_tool("chat_with_notebook", {
 # Core settings
 export NOTEBOOKLM_NOTEBOOK_ID="your-notebook-id"
 export NOTEBOOKLM_HEADLESS="true"
-export NOTEBOOKLM_DEBUG="false" 
+export NOTEBOOKLM_DEBUG="false"
 export NOTEBOOKLM_TIMEOUT="60"
 
 # Authentication

@@ -20,6 +20,11 @@ class AuthConfig:
     use_persistent_session: bool = True
     auto_login: bool = True
 
+    # Quick setup options
+    import_profile_from: Optional[str] = None  # Path to existing Chrome profile
+    export_profile_to: Optional[str] = None  # Path to export current profile
+    skip_manual_login: bool = False  # Skip manual login if profile exists
+
 
 @dataclass
 class ServerConfig:
@@ -98,7 +103,12 @@ class ServerConfig:
     def save_to_file(self, config_path: str) -> None:
         """Save configuration to JSON file"""
         config_data = self.to_dict()
-        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+
+        # Ensure directory exists
+        config_dir = os.path.dirname(config_path)
+        if config_dir:  # Only create if there's a directory component
+            os.makedirs(config_dir, exist_ok=True)
+
         with open(config_path, "w") as f:
             json.dump(config_data, f, indent=2)
 
@@ -120,6 +130,56 @@ class ServerConfig:
             raise ConfigurationError(
                 f"Profile directory parent does not exist: {self.auth.profile_dir}"
             )
+
+        # Validate import profile path
+        if (
+            self.auth.import_profile_from
+            and self.auth.import_profile_from.strip()
+            and not Path(self.auth.import_profile_from).exists()
+        ):
+            raise ConfigurationError(
+                f"Import profile path does not exist: {self.auth.import_profile_from}"
+            )
+
+    def setup_profile(self) -> None:
+        """Setup Chrome profile based on configuration"""
+        from shutil import copytree, rmtree
+
+        profile_path = Path(self.auth.profile_dir)
+
+        # Import existing profile if specified
+        if self.auth.import_profile_from and self.auth.import_profile_from.strip():
+            import_path = Path(self.auth.import_profile_from)
+
+            if profile_path.exists():
+                rmtree(profile_path)
+
+            copytree(import_path, profile_path)
+            print(f"✅ Imported profile from: {import_path}")
+
+        # Create profile directory if it doesn't exist
+        elif not profile_path.exists():
+            profile_path.mkdir(parents=True, exist_ok=True)
+            print(f"✅ Created new profile directory: {profile_path}")
+
+    def export_profile(self) -> None:
+        """Export current Chrome profile to specified location"""
+        if not self.auth.export_profile_to:
+            return
+
+        from shutil import copytree, rmtree
+
+        source_path = Path(self.auth.profile_dir)
+        export_path = Path(self.auth.export_profile_to)
+
+        if not source_path.exists():
+            raise ConfigurationError(f"Source profile does not exist: {source_path}")
+
+        if export_path.exists():
+            rmtree(export_path)
+
+        copytree(source_path, export_path)
+        print(f"✅ Exported profile to: {export_path}")
 
 
 def load_config(config_path: Optional[str] = None) -> ServerConfig:

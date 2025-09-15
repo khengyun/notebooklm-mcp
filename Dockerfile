@@ -64,4 +64,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "from notebooklm_mcp.config import ServerConfig; ServerConfig().validate()" || exit 1
 
 # Default command
-CMD ["notebooklm-mcp", "server", "--headless"]
+CMD ["notebooklm-mcp", "--config", "/app/config.json", "server", "--headless"]

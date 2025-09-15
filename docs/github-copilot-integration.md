@@ -6,10 +6,10 @@ GitHub Copilot hỗ trợ **Model Context Protocol (MCP)** để mở rộng kh�
 
 ## 🎯 Lợi ích
 
-✅ **Phân tích tài liệu thông minh** - Sử dụng NotebookLM để phân tích code, docs  
-✅ **Nghiên cứu nâng cao** - Hỏi đáp với kiến thức từ notebook sources  
-✅ **Tự động hóa workflow** - Copilot có thể sử dụng NotebookLM tools  
-✅ **Context-aware coding** - Kết hợp code với insights từ documents  
+✅ **Phân tích tài liệu thông minh** - Sử dụng NotebookLM để phân tích code, docs
+✅ **Nghiên cứu nâng cao** - Hỏi đáp với kiến thức từ notebook sources
+✅ **Tự động hóa workflow** - Copilot có thể sử dụng NotebookLM tools
+✅ **Context-aware coding** - Kết hợp code với insights từ documents
 
 ## 🛠️ Cài đặt và Cấu hình
 
@@ -133,7 +133,7 @@ def analyze_document(file_path):
           "args": ["server", "--notebook", "research-notebook-id", "--headless"]
         },
         "notebooklm-docs": {
-          "command": "notebooklm-mcp", 
+          "command": "notebooklm-mcp",
           "args": ["server", "--notebook", "docs-notebook-id", "--headless"]
         }
       }
@@ -154,7 +154,7 @@ def analyze_document(file_path):
           "args": ["server", "--headless"],
           "tools": [
             "chat_with_notebook",
-            "analyze_code_with_notebook", 
+            "analyze_code_with_notebook",
             "get_research_insights",
             "upload_and_analyze"
           ]
@@ -240,7 +240,7 @@ tail -f ~/.local/share/notebooklm-mcp/logs/server.log
 ```json
 {
   "NOTEBOOKLM_TIMEOUT": "30",
-  "NOTEBOOKLM_STREAMING_TIMEOUT": "45", 
+  "NOTEBOOKLM_STREAMING_TIMEOUT": "45",
   "NOTEBOOKLM_RESPONSE_STABILITY_CHECKS": "2"
 }
 ```

@@ -6,38 +6,38 @@ services:
     image: notebooklm-mcp:latest
     container_name: notebooklm-mcp-server
     restart: unless-stopped
-    
+
     environment:
       # Core settings
       - NOTEBOOKLM_HEADLESS=true
       - NOTEBOOKLM_DEBUG=false
       - NOTEBOOKLM_TIMEOUT=60
-      
+
       # Notebook configuration
       - NOTEBOOKLM_NOTEBOOK_ID=${NOTEBOOKLM_NOTEBOOK_ID}
-      
+
       # Chrome settings
       - NOTEBOOKLM_PROFILE_DIR=/app/chrome_profile
       - NOTEBOOKLM_PERSISTENT_SESSION=true
-      
+
     volumes:
       # Persist Chrome profile for session management
       - chrome_profile:/app/chrome_profile
-      
+
       # Optional: Mount config file
-      - ./config.json:/app/config.json:ro
-      
+      - ./notebooklm-config.json:/app/config.json:ro
+
       # Optional: Mount custom scripts
       - ./scripts:/app/scripts:ro
-    
+
     # For STDIO MCP mode, no ports needed
     # ports:
     #   - "8000:8000"
-    
+
     # Security settings
     security_opt:
       - no-new-privileges:true
-    
+
     # Resource limits
     deploy:
       resources:
@@ -47,7 +47,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
-    
+
     # Health check
     healthcheck:
       test: ["CMD", "python", "-c", "from notebooklm_mcp.config import ServerConfig; ServerConfig().validate()"]
