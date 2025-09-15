@@ -21,7 +21,7 @@ except ImportError:
 
 from notebooklm_mcp.client import NotebookLMClient
 from notebooklm_mcp.config import ServerConfig
-from notebooklm_mcp.server import NotebookLMServer
+from notebooklm_mcp.server import NotebookLMFastMCP
 
 
 class TestNotebookLMServerInitialization:

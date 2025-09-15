@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from click.testing import CliRunner
 
-from notebooklm_mcp.cli import chat, config_show, main, server, test_connection
+from notebooklm_mcp.cli import chat, config_show, main, server
 from notebooklm_mcp.client import NotebookLMClient
 
 

@@ -1,4 +1,4 @@
-name: "🧪 Tests & Quality"
+name: "🧪 Tests & Quality with UV"
 
 on:
   push:
@@ -14,10 +14,11 @@ concurrency:
 env:
   PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
   QT_QPA_PLATFORM: offscreen
+  UV_PYTHON: python3.10
 
 jobs:
   test:
-    name: "🧪 Unit Tests (Python ${{ matrix.python-version }})"
+    name: "🧪 Unit Tests with UV (Python ${{ matrix.python-version }})"
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -27,77 +28,70 @@ jobs:
     - name: "📥 Checkout repository"
       uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+    - name: "⚡ Install UV"
+      uses: astral-sh/setup-uv@v3
       with:
-        python-version: ${{ matrix.python-version }}
+        version: "latest"
+        enable-cache: true
 
-    - name: Install Task
+    - name: "🐍 Set up Python ${{ matrix.python-version }}"
+      run: uv python install ${{ matrix.python-version }}
+
+    - name: "📋 Install Task"
       uses: arduino/setup-task@v2
       with:
         version: 3.x
       continue-on-error: true
       id: setup-task
 
-    - name: Install Task (fallback)
+    - name: "📋 Install Task (fallback)"
       if: steps.setup-task.outcome == 'failure'
       run: |
         echo "Arduino setup failed, using direct installation..."
         sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
 
-    - name: Cache pip dependencies
+    - name: "🗂️ Cache UV dependencies"
       uses: actions/cache@v4
       with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+        path: ~/.cache/uv
+        key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
         restore-keys: |
-          ${{ runner.os }}-pip-
+          ${{ runner.os }}-uv-
 
-    - name: Install Chrome
+    - name: "🌐 Install Chrome"
       run: |
         wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
         echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
         sudo apt-get update
         sudo apt-get install -y google-chrome-stable
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        task install
+    - name: "📦 Install dependencies with UV"
+      run: task setup
+      env:
+        UV_PYTHON: ${{ matrix.python-version }}
 
-    - name: Show available tasks
+    - name: "📋 Show available tasks"
       run: task --list
 
-    - name: Lint with ruff
-      run: task lint
-
-    - name: Type check with mypy
-      run: task lint:mypy
-
-    - name: Run unit tests
+    - name: "🔍 Lint and format"
       run: |
-        # Generate both coverage.xml and JUnit XML reports
-        PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 coverage run \
-          --source=src/notebooklm_mcp \
-          -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py \
-          -p no:napari -p no:napari-plugin-engine -p no:npe2 \
-          --junitxml=junit.xml \
-          -v
+        task lint
+        task format
 
-        # Generate coverage XML
-        coverage xml
+    - name: "🧪 Run unit tests with coverage"
+      run: task test-coverage
       env:
         QT_QPA_PLATFORM: offscreen
         PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
 
-    - name: Upload test results to Codecov
+    - name: "📊 Upload test results to Codecov"
       if: ${{ !cancelled() }}
       uses: codecov/test-results-action@v1
       with:
         file: ./junit.xml
         token: ${{ secrets.CODECOV_TOKEN }}
 
-    - name: Upload coverage to Codecov
+    - name: "📈 Upload coverage to Codecov"
       uses: codecov/codecov-action@v4
       with:
         file: ./coverage.xml

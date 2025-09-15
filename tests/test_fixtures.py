@@ -16,7 +16,7 @@ from selenium.webdriver.remote.webelement import WebElement
 
 from notebooklm_mcp.client import NotebookLMClient
 from notebooklm_mcp.config import AuthConfig, ServerConfig
-from notebooklm_mcp.server import NotebookLMServer
+from notebooklm_mcp.server import NotebookLMFastMCP
 
 # ====================
 # Configuration Fixtures

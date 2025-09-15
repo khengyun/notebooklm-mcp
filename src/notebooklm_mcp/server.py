@@ -1,315 +1,297 @@
 #!/usr/bin/env python3
 """
-NotebookLM MCP Server
-Professional MCP server for NotebookLM automation with streaming support
+NotebookLM FastMCP v2 Server
+Modern MCP server implementation using FastMCP v2 framework
 """
 
 import asyncio
-import sys
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, Optional
 
+from fastmcp import FastMCP
+from pydantic import BaseModel, Field
 from loguru import logger
 
-# MCP Python SDK
-try:
-    from mcp.server import Server
-    from mcp.server.stdio import stdio_server
-    from mcp.types import TextContent, Tool
-except ImportError:
-    logger.error("MCP library required. Install with: pip install mcp")
-    sys.exit(1)
-
 from .client import NotebookLMClient
-from .config import ServerConfig, load_config
+from .config import ServerConfig
 from .exceptions import NotebookLMError
-from .monitoring import health_checker, request_timer
 
 
-class NotebookLMServer:
-    """Professional MCP server for NotebookLM automation"""
+# Pydantic models for type-safe tool parameters
+class SendMessageRequest(BaseModel):
+    """Request model for sending a message to NotebookLM"""
+    message: str = Field(..., description="The message to send to NotebookLM")
+    wait_for_response: bool = Field(True, description="Whether to wait for response after sending")
+
+
+class GetResponseRequest(BaseModel):
+    """Request model for getting response from NotebookLM"""
+    timeout: int = Field(30, description="Timeout in seconds for waiting for response")
+
+
+class ChatRequest(BaseModel):
+    """Request model for complete chat interaction"""
+    message: str = Field(..., description="The message to send")
+    notebook_id: Optional[str] = Field(None, description="Optional notebook ID to switch to")
+
+
+class NavigateRequest(BaseModel):
+    """Request model for navigating to a notebook"""
+    notebook_id: str = Field(..., description="The notebook ID to navigate to")
+
+
+class SetNotebookRequest(BaseModel):
+    """Request model for setting default notebook"""
+    notebook_id: str = Field(..., description="The notebook ID to set as default")
+
+
+class NotebookLMFastMCP:
+    """FastMCP v2 server for NotebookLM automation with enhanced error handling"""
 
     def __init__(self, config: ServerConfig):
         self.config = config
         self.client: Optional[NotebookLMClient] = None
-        self.server = Server("notebooklm-mcp")
+        
+        # Initialize FastMCP application
+        self.app = FastMCP(
+            name="NotebookLM MCP Server v2"
+        )
+        
+        # Setup tools
         self._setup_tools()
-
-    def _setup_tools(self) -> None:
-        """Register MCP tools"""
-
-        @self.server.list_tools()  # type: ignore[misc]
-        async def list_tools() -> List[Tool]:
-            return [
-                Tool(
-                    name="healthcheck",
-                    description="Check server health status",
-                    inputSchema={"type": "object", "properties": {}, "required": []},
-                ),
-                Tool(
-                    name="send_chat_message",
-                    description="Send a message to NotebookLM chat",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "message": {
-                                "type": "string",
-                                "description": "Message to send",
-                            }
-                        },
-                        "required": ["message"],
-                    },
-                ),
-                Tool(
-                    name="get_chat_response",
-                    description="Get response from NotebookLM with streaming support",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "wait_for_completion": {
-                                "type": "boolean",
-                                "description": "Wait for streaming to complete",
-                                "default": True,
-                            },
-                            "max_wait": {
-                                "type": "integer",
-                                "description": "Maximum wait time in seconds",
-                                "default": 60,
-                            },
-                        },
-                    },
-                ),
-                Tool(
-                    name="get_quick_response",
-                    description="Get current response without waiting for completion",
-                    inputSchema={"type": "object", "properties": {}, "required": []},
-                ),
-                Tool(
-                    name="chat_with_notebook",
-                    description="Send message and get complete response",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "message": {
-                                "type": "string",
-                                "description": "Message to send",
-                            },
-                            "max_wait": {
-                                "type": "integer",
-                                "description": "Maximum wait time in seconds",
-                                "default": 60,
-                            },
-                        },
-                        "required": ["message"],
-                    },
-                ),
-                Tool(
-                    name="navigate_to_notebook",
-                    description="Navigate to specific notebook",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "notebook_id": {
-                                "type": "string",
-                                "description": "Notebook ID",
-                            }
-                        },
-                        "required": ["notebook_id"],
-                    },
-                ),
-                Tool(
-                    name="get_default_notebook",
-                    description="Get current default notebook ID",
-                    inputSchema={"type": "object", "properties": {}, "required": []},
-                ),
-                Tool(
-                    name="set_default_notebook",
-                    description="Set default notebook ID",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "notebook_id": {
-                                "type": "string",
-                                "description": "Notebook ID",
-                            }
-                        },
-                        "required": ["notebook_id"],
-                    },
-                ),
-                Tool(
-                    name="shutdown",
-                    description="Shutdown the server gracefully",
-                    inputSchema={"type": "object", "properties": {}, "required": []},
-                ),
-            ]
-
-        @self.server.call_tool()  # type: ignore[misc]
-        async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
-            """Handle tool calls"""
-            try:
-                async with request_timer():
-                    result = await self._execute_tool(name, arguments)
-                    return [TextContent(type="text", text=str(result))]
-            except Exception as e:
-                logger.error(f"Tool {name} failed: {e}")
-                return [TextContent(type="text", text=f"Error: {str(e)}")]
-
-    async def _execute_tool(self, name: str, arguments: Dict[str, Any]) -> str:
-        """Execute individual tools"""
-
-        # Ensure client is ready
-        if not self.client and name != "healthcheck":
-            await self._ensure_client()
-
-        if name == "healthcheck":
-            health = await health_checker.check_health()
-            return f"Server healthy: {health.healthy}, Uptime: {health.uptime:.1f}s"
-
-        elif name == "send_chat_message":
-            if self.client is None:
-                raise RuntimeError("Client not initialized")
-            message = arguments.get("message", "")
-            await self.client.send_message(message)
-            return "Message sent successfully"
-
-        elif name == "get_chat_response":
-            if self.client is None:
-                raise RuntimeError("Client not initialized")
-            wait_for_completion = arguments.get("wait_for_completion", True)
-            max_wait = arguments.get("max_wait", 60)
-            response = await self.client.get_response(wait_for_completion, max_wait)
-            return response
-
-        elif name == "get_quick_response":
-            if self.client is None:
-                raise RuntimeError("Client not initialized")
-            response = await self.client.get_response(wait_for_completion=False)
-            return response
-
-        elif name == "chat_with_notebook":
-            if self.client is None:
-                raise RuntimeError("Client not initialized")
-            message = arguments.get("message", "")
-            max_wait = arguments.get("max_wait", 60)
-
-            # Send message
-            await self.client.send_message(message)
-            # Wait for complete response
-            response = await self.client.get_response(
-                wait_for_completion=True, max_wait=max_wait
-            )
-            return response
-
-        elif name == "navigate_to_notebook":
-            if self.client is None:
-                raise RuntimeError("Client not initialized")
-            notebook_id = arguments.get("notebook_id", "")
-            result_url = await self.client.navigate_to_notebook(notebook_id)
-            return f"Navigated to: {result_url}"
-
-        elif name == "get_default_notebook":
-            return self.config.default_notebook_id or "No default notebook set"
-
-        elif name == "set_default_notebook":
-            notebook_id = arguments.get("notebook_id", "")
-            self.config.default_notebook_id = notebook_id
-            return f"Default notebook set to: {notebook_id}"
-
-        elif name == "shutdown":
-            asyncio.create_task(self._shutdown())
-            return "Server shutting down..."
-
-        else:
-            raise NotebookLMError(f"Unknown tool: {name}")
+        
+        logger.info(f"FastMCP v2 server initialized for notebook: {config.default_notebook_id}")
 
     async def _ensure_client(self) -> None:
-        """Ensure client is initialized and authenticated"""
-        if not self.client:
-            self.client = NotebookLMClient(self.config)
-            health_checker.client = self.client
-
-            logger.info("Starting browser client...")
-            await self.client.start()
-
-            logger.info("Authenticating...")
-            auth_success = await self.client.authenticate()
-
-            if not auth_success and not self.config.headless:
-                logger.warning(
-                    "Authentication required - browser will stay open for manual login"
-                )
-
-    async def _shutdown(self) -> None:
-        """Graceful shutdown"""
-        logger.info("Shutting down server...")
-        if self.client:
-            await self.client.close()
-        # Give time for shutdown message to be sent
-        await asyncio.sleep(1)
-        sys.exit(0)
-
-    async def run(self) -> None:
-        """Run the MCP server"""
+        """Ensure NotebookLM client is initialized and authenticated"""
         try:
-            logger.info("Starting NotebookLM MCP Server...")
-
-            # Initialize client if needed
-            if self.config.default_notebook_id:
-                await self._ensure_client()
-
-            # Start MCP server over STDIO
-            async with stdio_server() as (reader, writer):
-                try:
-                    from mcp.shared.types import InitializationOptions
-
-                    init_options = InitializationOptions()
-                except ImportError:
-                    init_options = None
-                await self.server.run(reader, writer, init_options)
-
-        except KeyboardInterrupt:
-            logger.info("Server interrupted by user")
+            if self.client is None:
+                self.client = NotebookLMClient(self.config)
+                await self.client.start()
+                logger.info("✅ NotebookLM client initialized and authenticated")
         except Exception as e:
-            logger.error(f"Server error: {e}")
-            raise
-        finally:
+            logger.error(f"Failed to initialize client: {e}")
+            raise NotebookLMError(f"Client initialization failed: {e}")
+
+    def _setup_tools(self) -> None:
+        """Setup FastMCP v2 tools with enhanced error handling and performance"""
+        
+        @self.app.tool()
+        async def healthcheck() -> Dict[str, Any]:
+            """Check if the NotebookLM server is healthy and responsive."""
+            try:
+                if not self.client:
+                    return {
+                        "status": "unhealthy", 
+                        "message": "Client not initialized",
+                        "authenticated": False
+                    }
+                
+                auth_status = getattr(self.client, '_is_authenticated', False)
+                
+                return {
+                    "status": "healthy" if auth_status else "needs_auth",
+                    "message": "Server is running",
+                    "authenticated": auth_status,
+                    "notebook_id": self.config.default_notebook_id,
+                    "mode": "headless" if self.config.headless else "gui"
+                }
+                
+            except Exception as e:
+                logger.error(f"Health check failed: {e}")
+                return {
+                    "status": "error",
+                    "message": f"Health check failed: {e}",
+                    "authenticated": False
+                }
+
+        @self.app.tool()
+        async def send_chat_message(request: SendMessageRequest) -> Dict[str, Any]:
+            """Send a message to NotebookLM chat interface."""
+            try:
+                await self._ensure_client()
+                await self.client.send_message(request.message)
+                
+                response_data = {"status": "sent", "message": request.message}
+                
+                if request.wait_for_response:
+                    response = await self.client.get_response()
+                    response_data["response"] = response
+                    response_data["status"] = "completed"
+                
+                logger.info(f"Message sent successfully: {request.message[:50]}...")
+                return response_data
+                
+            except Exception as e:
+                logger.error(f"Failed to send message: {e}")
+                raise NotebookLMError(f"Failed to send message: {e}")
+
+        @self.app.tool()
+        async def get_chat_response(request: GetResponseRequest) -> Dict[str, Any]:
+            """Get the latest response from NotebookLM with streaming support."""
+            try:
+                await self._ensure_client()
+                response = await self.client.get_response()
+                
+                logger.info("Response retrieved successfully")
+                return {
+                    "status": "success",
+                    "response": response,
+                    "message": "Response retrieved successfully"
+                }
+                
+            except Exception as e:
+                logger.error(f"Failed to get response: {e}")
+                raise NotebookLMError(f"Failed to get response: {e}")
+
+        @self.app.tool()
+        async def get_quick_response() -> Dict[str, Any]:
+            """Get current response without waiting for completion."""
+            try:
+                await self._ensure_client()
+                response = await self.client.get_response()
+                
+                return {
+                    "status": "success",
+                    "response": response,
+                    "message": "Quick response retrieved"
+                }
+                
+            except Exception as e:
+                logger.error(f"Failed to get quick response: {e}")
+                raise NotebookLMError(f"Failed to get quick response: {e}")
+
+        @self.app.tool()
+        async def chat_with_notebook(request: ChatRequest) -> Dict[str, Any]:
+            """Complete chat interaction: send message and get response."""
+            try:
+                await self._ensure_client()
+                
+                # Switch notebook if specified
+                if request.notebook_id:
+                    await self.client.navigate_to_notebook(request.notebook_id)
+                
+                # Send message and get response
+                await self.client.send_message(request.message)
+                response = await self.client.get_response()
+                
+                logger.info(f"Chat completed: {request.message[:50]}...")
+                return {
+                    "status": "success",
+                    "message": request.message,
+                    "response": response,
+                    "notebook_id": request.notebook_id or self.config.default_notebook_id
+                }
+                
+            except Exception as e:
+                logger.error(f"Chat interaction failed: {e}")
+                raise NotebookLMError(f"Chat interaction failed: {e}")
+
+        @self.app.tool()
+        async def navigate_to_notebook(request: NavigateRequest) -> Dict[str, Any]:
+            """Navigate to a specific notebook."""
+            try:
+                await self._ensure_client()
+                await self.client.navigate_to_notebook(request.notebook_id)
+                
+                logger.info(f"Navigated to notebook: {request.notebook_id}")
+                return {
+                    "status": "success",
+                    "notebook_id": request.notebook_id,
+                    "message": f"Successfully navigated to notebook {request.notebook_id}"
+                }
+                
+            except Exception as e:
+                logger.error(f"Navigation failed: {e}")
+                raise NotebookLMError(f"Failed to navigate to notebook: {e}")
+
+        @self.app.tool()
+        async def get_default_notebook() -> Dict[str, Any]:
+            """Get the current default notebook ID."""
+            return {
+                "status": "success",
+                "notebook_id": self.config.default_notebook_id,
+                "message": "Current default notebook ID"
+            }
+
+        @self.app.tool()
+        async def set_default_notebook(request: SetNotebookRequest) -> Dict[str, Any]:
+            """Set the default notebook ID."""
+            try:
+                old_notebook = self.config.default_notebook_id
+                self.config.default_notebook_id = request.notebook_id
+                
+                logger.info(f"Default notebook changed: {old_notebook} → {request.notebook_id}")
+                return {
+                    "status": "success",
+                    "old_notebook_id": old_notebook,
+                    "new_notebook_id": request.notebook_id,
+                    "message": f"Default notebook set to {request.notebook_id}"
+                }
+                
+            except Exception as e:
+                logger.error(f"Failed to set default notebook: {e}")
+                raise NotebookLMError(f"Failed to set default notebook: {e}")
+
+    async def start(self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000):
+        """Start the FastMCP v2 server with specified transport"""
+        try:
+            # Initialize client
+            await self._ensure_client()
+            
+            # Run the FastMCP server with specified transport
+            if transport == "http":
+                logger.info(f"🌐 Starting HTTP server on http://{host}:{port}/mcp/")
+                await self.app.run_async(transport="http", host=host, port=port)
+            elif transport == "sse":
+                logger.info(f"🌐 Starting SSE server on http://{host}:{port}/")
+                await self.app.run_async(transport="sse", host=host, port=port)
+            else:
+                logger.info("📡 Starting STDIO server...")
+                await self.app.run_async(transport="stdio")
+                
+        except Exception as e:
+            logger.error(f"Failed to start FastMCP server: {e}")
+            raise NotebookLMError(f"Server startup failed: {e}")
+
+    async def stop(self):
+        """Gracefully stop the server"""
+        try:
             if self.client:
-                await self.client.close()
+                await self.client.stop()
+                logger.info("✅ FastMCP server stopped gracefully")
+        except Exception as e:
+            logger.error(f"Error during server shutdown: {e}")
 
 
-async def main() -> None:
-    """Main entry point"""
-    import argparse
+# Factory function for easy server creation
+def create_fastmcp_server(config_file: str) -> NotebookLMFastMCP:
+    """Create a FastMCP v2 server from configuration file"""
+    from .config import load_config
+    
+    config = load_config(config_file)
+    return NotebookLMFastMCP(config)
 
-    parser = argparse.ArgumentParser(description="NotebookLM MCP Server")
-    parser.add_argument("--config", "-c", help="Configuration file path")
-    parser.add_argument("--notebook", "-n", help="Default notebook ID")
-    parser.add_argument("--headless", action="store_true", help="Run in headless mode")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
-    args = parser.parse_args()
-
-    # Load configuration
-    config = load_config(args.config)
-
-    # Override with CLI arguments
-    if args.notebook:
-        config.default_notebook_id = args.notebook
-    if args.headless:
-        config.headless = True
-    if args.debug:
-        config.debug = True
-
-    # Validate configuration
-    config.validate()
-
-    # Setup logging
-    from .monitoring import setup_logging
-
-    setup_logging(config.debug)
-
-    # Start server
-    server = NotebookLMServer(config)
-    await server.run()
+# Main entry point for standalone usage
+async def main():
+    """Main entry point for running server standalone"""
+    import sys
+    
+    if len(sys.argv) < 2:
+        print("Usage: python -m notebooklm_mcp.server <config_file>")
+        sys.exit(1)
+    
+    config_file = sys.argv[1]
+    server = create_fastmcp_server(config_file)
+    
+    try:
+        await server.start()
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

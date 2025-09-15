@@ -17,7 +17,7 @@ from rich.table import Table
 from .client import NotebookLMClient
 from .config import AuthConfig, ServerConfig, load_config
 from .exceptions import ConfigurationError
-from .server import NotebookLMServer
+from .server import NotebookLMFastMCP
 
 console = Console()
 
@@ -106,6 +106,7 @@ def cli(ctx: click.Context, config: Optional[str], debug: bool) -> None:
         if debug:
             server_config.debug = True
         ctx.obj["config"] = server_config
+        ctx.obj["config_file"] = config or "notebooklm-config.json"  # Store config file path
     except Exception as e:
         console.print(f"[red]Configuration error: {e}[/red]")
         sys.exit(1)
@@ -200,13 +201,30 @@ def init(notebook_url: str, config_path: str, headless: bool) -> None:
 @cli.command()
 @click.option("--notebook", "-n", help="Notebook ID to use")
 @click.option("--headless", is_flag=True, help="Run in headless mode")
-@click.option("--port", type=int, help="Server port (if not using STDIO)")
+@click.option("--port", type=int, default=8000, help="Server port (default: 8000)")
+@click.option("--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)")
+@click.option("--root-dir", help="Root directory for server operations (default: current directory)")
+@click.option("--transport", type=click.Choice(['stdio', 'http', 'sse']), default='stdio', help="Transport protocol (default: stdio)")
 @click.pass_context
 def server(
-    ctx: click.Context, notebook: Optional[str], headless: bool, port: Optional[int]
+    ctx: click.Context, notebook: Optional[str], headless: bool, port: int, host: str, root_dir: Optional[str], transport: str
 ) -> None:
-    """Start the MCP server"""
+    """Start the FastMCP v2 NotebookLM server"""
+    import os
+    from pathlib import Path
+    
     config: ServerConfig = ctx.obj["config"]
+
+    # Auto-detect current working directory as root
+    if root_dir:
+        working_dir = Path(root_dir).resolve()
+    else:
+        working_dir = Path.cwd()
+    
+    # Ensure root directory exists
+    if not working_dir.exists():
+        console.print(f"[red]Root directory does not exist: {working_dir}[/red]")
+        sys.exit(1)
 
     if notebook:
         config.default_notebook_id = notebook
@@ -215,24 +233,56 @@ def server(
 
     console.print(
         Panel.fit(
-            "[bold blue]Starting NotebookLM MCP Server[/bold blue]\n"
+            "[bold blue]Starting NotebookLM FastMCP v2 Server[/bold blue]\n"
             f"Mode: {'Headless' if config.headless else 'GUI'}\n"
+            f"Transport: {transport.upper()}\n"
+            f"{'Host: ' + host if transport != 'stdio' else ''}\n"
+            f"{'Port: ' + str(port) if transport != 'stdio' else ''}\n"
             f"Notebook: {config.default_notebook_id or 'None'}\n"
+            f"Working Directory: {working_dir}\n"
+            f"Profile: {config.auth.profile_dir}\n"
             f"Debug: {config.debug}",
-            title="🚀 Server Starting",
+            title="🚀 FastMCP Server Starting",
         )
     )
 
+    # Change to working directory
+    os.chdir(working_dir)
+    console.print(f"[dim]📁 Set working directory to: {working_dir}[/dim]")
+
     try:
-        server = NotebookLMServer(config)
-        asyncio.run(server.run())
+        # Use FastMCP v2 implementation only
+        server = NotebookLMFastMCP(config)
+        
+        if transport == "http":
+            console.print(f"[green]🌐 FastMCP HTTP server will be available at: http://{host}:{port}/mcp/[/green]")
+        elif transport == "sse":
+            console.print(f"[green]🌐 FastMCP SSE server will be available at: http://{host}:{port}/[/green]")
+        
+        asyncio.run(server.start(transport=transport, host=host, port=port))
+        
     except KeyboardInterrupt:
         console.print("\n[yellow]Server stopped by user[/yellow]")
     except Exception as e:
         console.print(f"[red]Server error: {e}[/red]")
+        
+        # Better authentication error handling
+        if "Authentication required" in str(e):
+            console.print(
+                Panel.fit(
+                    "[yellow]🔐 Authentication Required[/yellow]\n\n"
+                    "The server needs manual authentication to access NotebookLM.\n\n"
+                    "[bold]To fix this:[/bold]\n"
+                    "1. Run without --headless flag for manual login:\n"
+                    f"   [cyan]notebooklm-mcp --config {ctx.obj.get('config_file', 'notebooklm-config.json')} server[/cyan]\n\n"
+                    "2. Complete Google login in the browser\n"
+                    "3. Then retry with --headless flag for production use",
+                    title="🔑 Authentication Help"
+                )
+            )
+        
         if config.debug:
             import traceback
-
             console.print(traceback.format_exc())
         sys.exit(1)
 

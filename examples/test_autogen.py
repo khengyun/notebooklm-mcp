@@ -9,17 +9,53 @@ async def main():
     print("🔍 Checking if config exists...")
     import os
 
+    print("🔍 Checking if config exists...")
     if not os.path.exists("notebooklm-config.json"):
         print("❌ Config file not found!")
         print(
             "💡 Please run: notebooklm-mcp init https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID"
         )
         return
+    
+    # Test authentication status first
+    print("🔐 Testing authentication status...")
+    test_workbench = None
+    try:
+        # Quick test with headless mode
+        test_params = StdioServerParams(
+            command="notebooklm-mcp", 
+            args=["--config", "notebooklm-config.json", "server", "--headless"]
+        )
+        test_workbench = McpWorkbench(test_params)
+        
+        await test_workbench.start()
+        await asyncio.sleep(3)  # Short wait
+        
+        # Try health check
+        health_result = await test_workbench.call_tool("healthcheck", {})
+        print("✅ Authentication valid - proceeding with headless mode")
+        await test_workbench.close()
+        
+        
+    except Exception as e:
+        print(f"⚠️  Authentication needed: {e}")
+        print("🔧 Running in GUI mode for manual authentication...")
+        print("   Please complete login in the browser window")
+        
+        # Use GUI mode
+        params = StdioServerParams(
+            command="notebooklm-mcp", 
+            args=["--config", "notebooklm-config.json", "server"]
+        )
+        
+        # Close test workbench if it exists
+        if test_workbench:
+            try:
+                await test_workbench.close()
+            except Exception:
+                pass
 
-    # Configure MCP server with correct syntax
-    params = StdioServerParams(
-        command="notebooklm-mcp", args=["--config", "notebooklm-config.json", "server"]
-    )
+    # Configure MCP server with determined params
 
     # Create MCP workbench
     workbench = McpWorkbench(params)

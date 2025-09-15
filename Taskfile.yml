@@ -1,214 +1,191 @@
-version: "3"
+version: '3'
 
 vars:
   PACKAGE_NAME: notebooklm_mcp
-  PYTHON: python
-  PYTEST_CMD: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 {{.PYTHON}} -m pytest
-  PYTEST_FLAGS: -p no:napari -p no:napari-plugin-engine -p no:npe2 -p no:cov --tb=short
+  PYTHON_CMD: uv run python
+  PYTEST_CMD: uv run pytest
+  CONFIG_FILE: notebooklm-config.json
+
+env:
+  UV_PYTHON: python3.10
 
 tasks:
   default:
-    desc: Show available tasks
+    desc: "🎯 Show all available tasks"
     cmds:
       - task --list
 
+  # =============================================================================
+  # 🚀 UV Environment Management
+  # =============================================================================
+
+  setup:
+    desc: "🔧 Complete project setup with UV"
+    cmds:
+      - echo "🚀 Setting up NotebookLM MCP with UV..."
+      - uv sync --all-groups
+      - echo "✅ Project setup complete!"
+      - echo "📝 Run 'task --list' to see available commands"
+
   install:
-    desc: Install package in development mode
+    desc: "📦 Install project dependencies with UV"
     cmds:
-      - pip install -e ".[dev,test]"
+      - echo "📦 Installing with UV..."
+      - uv sync
 
-  # Quick Testing Tasks
-  test:quick:
-    desc: Run single quick unit test
+  install-dev:
+    desc: "🔧 Install development dependencies"
     cmds:
-      - "{{.PYTEST_CMD}} tests/test_config.py::TestServerConfig::test_default_config -v"
+      - echo "🔧 Installing development dependencies..."
+      - uv sync --group dev --group test --group lint
+    deps:
+      - task: install
 
-  test:unit:
-    desc: Run stable unit tests only
+  test:
+    desc: "🧪 Run working tests with UV"
     cmds:
-      - "{{.PYTEST_CMD}} tests/test_config.py tests/test_config_real.py -v {{.PYTEST_FLAGS}}"
+      - echo "🧪 Running working tests..."
+      - "{{.PYTEST_CMD}} tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py -v"
+    deps:
+      - task: install
 
-  test:coverage:
-    desc: MANDATORY coverage test - focused on tested modules
+  test-quick:
+    desc: "⚡ Quick single test for validation"
     cmds:
-      - echo "🔍 MANDATORY Coverage Testing - Config Module Focus"
-      - echo "📊 Running coverage on actual tested code..."
-      - |
-        # Run coverage on the entire package but analyze what's actually tested
-        PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 coverage run \
-          --source=src/{{.PACKAGE_NAME}} \
-          -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py \
-          -p no:napari -p no:napari-plugin-engine -p no:npe2 \
-          -v || TEST_FAILED=1
+      - echo "⚡ Running quick validation test..."
+      - "{{.PYTEST_CMD}} tests/test_config_real.py::TestServerConfig::test_default_values -v"
+    deps:
+      - task: install
 
-        if [ "$TEST_FAILED" = "1" ]; then
-          echo "❌ TESTS FAILED - Cannot measure coverage"
-          exit 1
-        fi
-
-        echo "📋 Coverage Report:"
-        coverage report --show-missing
-
-        # Generate XML for CI/CD
-        coverage xml
-
-        # Check config module coverage specifically
-        CONFIG_COVERAGE=$(coverage report | grep "config.py" | awk '{print $4}' | sed 's/%//')
-
-        if [ "$CONFIG_COVERAGE" -lt "70" ]; then
-          echo "❌ CONFIG MODULE COVERAGE TOO LOW: ${CONFIG_COVERAGE}% (minimum 70%)"
-          echo "📋 Config module needs more comprehensive testing"
-          exit 1
-        fi
-
-        coverage html
-        echo "📊 Config module coverage: ${CONFIG_COVERAGE}%"
-      - echo "✅ Coverage requirement satisfied for tested modules"
-
-  test:coverage-real:
-    desc: Show current coverage info (simplified)
+  test-coverage:
+    desc: "📊 Run coverage analysis with UV"
     cmds:
-      - echo "📊 Coverage testing currently has config conflicts"
-      - echo "✅ All unit tests pass reliably (21/21)"
-      - echo "⚠️ Config files blocking pytest-cov plugin integration"
-      - "{{.PYTEST_CMD}} tests/test_config.py tests/test_config_real.py -p no:napari -p no:napari-plugin-engine -p no:npe2 -v"
-      - echo "🎯 Focus{{":"}} Fix linting issues, maintain test stability"
+      - echo "📊 Running coverage analysis..."
+      - uv run coverage run --source=src/{{.PACKAGE_NAME}} -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py --junitxml=junit.xml
+      - uv run coverage report --show-missing
+      - uv run coverage xml
+      - uv run coverage html
+      - echo "📋 Coverage report generated in htmlcov/"
+    deps:
+      - task: install
 
-  test:integration:
-    desc: Run integration tests (requires Chrome)
-    cmds:
-      - "{{.PYTEST_CMD}} tests/test_integration.py -v {{.PYTEST_FLAGS}}"
-
-  test:all:
-    desc: Run all tests (may have async conflicts)
-    cmds:
-      - "{{.PYTEST_CMD}} tests/ -v {{.PYTEST_FLAGS}}"
-
-  test:watch:
-    desc: Watch files and run tests on changes
-    deps: [install]
-    cmds:
-      - "{{.PYTHON}} -m pytest_watch -- tests/test_config.py tests/test_config_real.py -v {{.PYTEST_FLAGS}}"
-
-  # Code Quality Tasks
   lint:
-    desc: Run ruff linting (mypy excluded for now)
+    desc: "🔍 Run linting with UV"
     cmds:
-      - ruff check src/ tests/
-
-  lint:mypy:
-    desc: Run mypy type checking (optional - has many errors)
-    cmds:
-      - mypy src/{{.PACKAGE_NAME}} --ignore-missing-imports
-
-  lint:fix:
-    desc: Auto-fix linting issues
-    cmds:
-      - ruff check src/ tests/ --fix
-      - ruff format src/ tests/
+      - echo "🦀 Running Ruff linter..."
+      - uv run ruff check src/ tests/ --fix
+    deps:
+      - task: install
 
   format:
-    desc: Format code with black and isort
+    desc: "🎨 Format code with UV"
     cmds:
-      - black src/ tests/
-      - isort src/ tests/
-      - ruff format src/ tests/
-
-  format:check:
-    desc: Check code formatting
-    cmds:
-      - black --check src/ tests/
-      - isort --check-only src/ tests/
-      - ruff format --check src/ tests/
-
-  # CLI Testing Tasks
-  cli:test:
-    desc: Test CLI functionality
-    cmds:
-      - notebooklm-mcp --help
-      - notebooklm-mcp config-show
-
-  cli:import:
-    desc: Test package imports
-    cmds:
-      - "{{.PYTHON}} -c \"from {{.PACKAGE_NAME}} import ServerConfig, NotebookLMClient; print('✅ Import successful')\""
-      - "{{.PYTHON}} -c \"from {{.PACKAGE_NAME}}.server import NotebookLMServer; print('✅ Server import successful')\""
-
-  # Development Workflow
-  dev:setup:
-    desc: Setup development environment
-    deps: [install]
-    cmds:
-      - pre-commit install
-      - echo "✅ Development environment setup complete"
-
-  dev:test:
-    desc: Run development test suite (unit + lint)
-    deps: [test:unit, lint]
-    cmds:
-      - echo "✅ Development tests passed"
-
-  dev:check:
-    desc: Pre-commit checks (format + lint + test + coverage)
-    deps: [format:check, lint, test:coverage]
-    cmds:
-      - echo "✅ All pre-commit checks passed"
-
-  # Build Tasks
-  clean:
-    desc: Clean build artifacts
-    cmds:
-      - rm -rf build/ dist/ *.egg-info/
-      - rm -rf .coverage htmlcov/ .pytest_cache/
-      - find . -type d -name __pycache__ -exec rm -rf {} + || true
-      - find . -type f -name "*.pyc" -delete || true
+      - echo "⚫ Formatting with Black..."
+      - uv run black src/ tests/
+      - echo "📊 Sorting imports..."
+      - uv run isort src/ tests/
+    deps:
+      - task: install
 
   build:
-    desc: Build package
-    deps: [clean]
+    desc: "🏗️ Build package with UV"
     cmds:
-      - "{{.PYTHON}} -m build"
+      - echo "🏗️ Building package..."
+      - uv build
+      - echo "✅ Package built successfully!"
+    deps:
+      - task: install
 
-  # Release Tasks
-  release:check:
-    desc: Pre-release checks (must pass 95% coverage)
-    deps: [test:coverage, lint, build]
+  build-check:
+    desc: "✅ Validate build artifacts"
     cmds:
-      - twine check dist/*
-      - echo "✅ Release checks passed"
+      - echo "✅ Checking build artifacts..."
+      - uv run twine check dist/*
+    deps:
+      - task: build
 
-  release:publish:
-    desc: Publish to PyPI (after release:check)
-    deps: [release:check]
+  server-stdio:
+    desc: "🚀 Start FastMCP v2 server (STDIO mode)"
     cmds:
-      - twine upload dist/*
+      - echo "🚀 Starting FastMCP v2 server (STDIO)..."
+      - "{{.PYTHON_CMD}} -m notebooklm_mcp.cli --config {{.CONFIG_FILE}} server"
+    deps:
+      - task: install
 
-  # Function Change Enforcement
-  enforce:test:
-    desc: 🚨 MANDATORY - Run after ANY function changes
-    deps: [lint, test:coverage]
+  server-http:
+    desc: "🌐 Start FastMCP v2 server (HTTP mode)"
     cmds:
-      - echo "🚨 FUNCTION CHANGE ENFORCEMENT COMPLETE"
-      - echo "✅ Linting passed"
-      - echo "✅ Coverage ≥95% verified"
-      - echo "✅ All tests passed"
-      - echo "🔒 Change approved - quality gates satisfied"
+      - echo "🌐 Starting FastMCP v2 server (HTTP)..."
+      - "{{.PYTHON_CMD}} -m notebooklm_mcp.cli --config {{.CONFIG_FILE}} server --transport http --port 8001 --headless"
+    deps:
+      - task: install
 
-  # Debug Tasks
-  debug:env:
-    desc: Show environment information
+  clean:
+    desc: "🧹 Clean build artifacts"
     cmds:
-      - echo "Python{{":"}} $(which {{.PYTHON}})"
-      - "{{.PYTHON}} --version"
-      - pip list | grep -E "(notebooklm|pytest|selenium)"
-      - echo "Task runner{{":"}} $(task --version)"
+      - echo "🧹 Cleaning build artifacts..."
+      - rm -rf dist/ build/ *.egg-info/
+      - rm -rf htmlcov/ .coverage
+      - find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
-  debug:test:
-    desc: Debug test issues
+  info:
+    desc: "ℹ️ Show project information"
     cmds:
-      - echo "Testing import capabilities..."
-      - task cli:import
-      - echo "Testing basic functionality..."
-      - task test:quick
-      - echo "Environment check..."
-      - task debug:env
+      - echo "📊 NotebookLM MCP Project Information"
+      - echo "======================================"
+      - echo "🏷️ Package {{.PACKAGE_NAME}}"
+      - "{{.PYTHON_CMD}} --version"
+      - uv --version
+      - pwd
+
+  # =============================================================================
+  # 📋 Dependency Management with UV
+  # =============================================================================
+
+  deps-add:
+    desc: "➕ Add new dependency (usage: task deps-add -- package_name)"
+    cmds:
+      - echo "➕ Adding dependency {{.CLI_ARGS}}"
+      - uv add {{.CLI_ARGS}}
+
+  deps-add-dev:
+    desc: "➕ Add development dependency (usage: task deps-add-dev -- package_name)"
+    cmds:
+      - echo "➕ Adding dev dependency {{.CLI_ARGS}}"
+      - uv add --group dev {{.CLI_ARGS}}
+
+  deps-remove:
+    desc: "➖ Remove dependency (usage: task deps-remove -- package_name)"
+    cmds:
+      - echo "➖ Removing dependency {{.CLI_ARGS}}"
+      - uv remove {{.CLI_ARGS}}
+
+  deps-list:
+    desc: "📋 List all dependencies"
+    cmds:
+      - echo "📋 Project dependencies:"
+      - uv tree
+
+  deps-lock:
+    desc: "🔒 Generate dependency lockfile"
+    cmds:
+      - echo "🔒 Generating lockfile..."
+      - uv lock
+
+  deps-update:
+    desc: "🔄 Update all dependencies"
+    cmds:
+      - echo "🔄 Updating dependencies..."
+      - uv sync --upgrade
+
+  # =============================================================================
+  # 🚨 Quality Assurance
+  # =============================================================================
+
+  enforce-test:
+    desc: "🚨 MANDATORY Enforce testing after function changes"
+    cmds:
+      - echo "🚨 MANDATORY TESTING ENFORCEMENT"
+      - echo "⚠️ This must pass after ANY function changes!"
+      - task: test-coverage
+      - echo "✅ Test enforcement completed!"

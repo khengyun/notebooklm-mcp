@@ -1,24 +1,24 @@
 """
-NotebookLM MCP Server Package
+NotebookLM FastMCP v2 Server Package
 
-A professional Model Context Protocol (MCP) server for automating interactions
-with Google's NotebookLM platform. Features persistent sessions, streaming response
-support, and comprehensive automation capabilities.
+A modern FastMCP v2 server for automating interactions with Google's NotebookLM 
+platform. Features enhanced type safety, decorator-based tools, and multi-transport 
+support (STDIO, HTTP, SSE).
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __author__ = "NotebookLM MCP Team"
 __email__ = "support@notebooklm-mcp.dev"
-__description__ = "Professional MCP server for NotebookLM automation"
+__description__ = "FastMCP v2 server for NotebookLM automation with modern async support"
 
 from .client import NotebookLMClient
 from .config import AuthConfig, ServerConfig
 from .exceptions import AuthenticationError, NotebookLMError, StreamingError
-from .server import NotebookLMServer
+from .server import NotebookLMFastMCP
 
 __all__ = [
-    "NotebookLMServer",
-    "NotebookLMClient",
+    "NotebookLMFastMCP",
+    "NotebookLMClient", 
     "ServerConfig",
     "AuthConfig",
     "NotebookLMError",

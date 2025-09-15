@@ -4,21 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "notebooklm-mcp"
-version = "1.0.0"
-description = "Professional MCP server for NotebookLM automation with streaming support"
+version = "2.0.0"
+description = "FastMCP v2 server for NotebookLM automation with modern async support"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "NotebookLM MCP Team", email = "support@notebooklm-mcp.dev"}
 ]
 maintainers = [
     {name = "NotebookLM MCP Team", email = "support@notebooklm-mcp.dev"}
 ]
-keywords = ["mcp", "notebooklm", "automation", "ai", "llm", "streaming"]
+keywords = ["fastmcp", "mcp", "notebooklm", "automation", "ai", "llm", "fastmcp-v2"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -30,21 +29,31 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
+    # Core FastMCP v2 framework
+    "fastmcp>=2.0.0",
+    
+    # Web automation
     "selenium>=4.22.0",
-    "mcp>=1.2.0",
-    "anyio>=4.4.0",
-    "trio>=0.26.0",
-    "async-timeout>=4.0.3",
-    "loguru>=0.7.2",
-    "pydantic>=2.8.2",
     "undetected-chromedriver>=3.5.4",
+    
+    # Async support
+    "anyio>=4.4.0",
+    "trio>=0.26.0", 
+    "async-timeout>=4.0.3",
+    
+    # Data validation and CLI
+    "pydantic>=2.8.2",
     "click>=8.0.0",
     "rich>=13.0.0",
+    
+    # Logging and utilities
+    "loguru>=0.7.2",
     "typing-extensions>=4.0.0",
     "psutil>=5.9.0",
 ]
 
-[project.optional-dependencies]
+# Modern dependency groups (PEP 735) - UV native support
+[dependency-groups]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
@@ -53,17 +62,27 @@ dev = [
     "ruff>=0.1.0",
     "black>=23.0.0",
     "isort>=5.12.0",
-    "flake8>=6.0.0",
     "mypy>=1.5.0",
     "pre-commit>=3.3.0",
-    "build>=1.0.0",
-    "twine>=4.0.0",
 ]
 test = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.11.0",
+    "coverage>=7.0.0",
+]
+lint = [
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.5.0",
+]
+build = [
+    "build>=1.0.0",
+    "twine>=4.0.0",
+    "setuptools>=65.0",
+    "wheel",
 ]
 docs = [
     "mkdocs>=1.5.0",
@@ -71,6 +90,34 @@ docs = [
     "mkdocs-mermaid2-plugin>=1.1.0",
     "mkdocstrings[python]>=0.23.0",
 ]
+
+# UV Configuration
+[tool.uv]
+# Development workflow configuration
+dev-dependencies = []  # Use dependency-groups instead
+
+# Package configuration
+package = true
+
+# Constraint dependencies for consistent resolution
+constraint-dependencies = [
+    "selenium>=4.20.0,<5.0",
+    "pydantic>=2.8.0,<3.0"
+]
+
+# Build constraints
+build-constraint-dependencies = [
+    "setuptools>=65.0",
+    "wheel"
+]
+
+# Dependency conflict resolution
+conflicts = []
+
+# Sources configuration for alternative package locations
+[tool.uv.sources]
+# Example: Use development version of fastmcp if needed
+# fastmcp = { git = "https://github.com/jlowin/fastmcp", branch = "main" }
 
 [project.urls]
 Homepage = "https://github.com/notebooklm-mcp/notebooklm-mcp"
