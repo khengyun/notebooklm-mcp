@@ -18,7 +18,7 @@ env:
 
 jobs:
   test:
-    name: "🧪 Unit Tests with UV (Python ${{ matrix.python-version }})"
+    name: "🧪 Tests & Coverage with UV (Python ${{ matrix.python-version }})"
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -100,14 +100,17 @@ jobs:
         echo "📊 Sorting imports..."
         uv run isort src/ tests/
 
-    - name: "🧪 Run unit tests with coverage"
+    - name: "🧪 Run unit tests with coverage analysis"
       run: |
         export PATH="$HOME/.cargo/bin:$PATH"
-        echo "📊 Running coverage analysis..."
+        echo "🧪 Running tests with coverage analysis..."
         uv run coverage run --source=src/notebooklm_mcp -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py --junitxml=junit.xml -v
+        echo "📊 Generating coverage reports..."
         uv run coverage report --show-missing
         uv run coverage xml
-        echo "📋 Coverage report completed successfully"
+        echo "✅ Coverage analysis completed successfully"
+        echo "📋 Coverage percentage:"
+        uv run coverage report --format=total
       env:
         QT_QPA_PLATFORM: offscreen
         PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
