@@ -27,14 +27,21 @@ jobs:
       with:
         version: 3.x
 
-    - name: "📦 Setup project with UV"
-      run: task setup
+    - name: "� Verify UV Installation"
+      run: |
+        echo "UV version:"
+        uv --version
+        echo "UV Python installations:"
+        uv python list
+
+    - name: "�📦 Setup project with UV"
+      run: uv sync --all-groups
 
     - name: "🏗️ Build package with UV"
-      run: task build
+      run: uv build
 
     - name: "✅ Check package"
-      run: task build-check
+      run: uv run twine check dist/*
 
     - name: "📤 Publish to TestPyPI"
       uses: pypa/gh-action-pypi-publish@release/v1
