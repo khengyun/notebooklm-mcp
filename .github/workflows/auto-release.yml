@@ -1,24 +1,17 @@
 name: "🚀 Auto Release on Main"
 
+# 🎯 Workflow Logic:
+# 1. Triggers ONLY when tests pass successfully on main branch
+# 2. Skips release for version bump commits to avoid infinite loops
+# 3. Supports manual triggering via workflow_dispatch
+# 4. Auto-increments version and creates GitHub release
+
 on:
   workflow_run:
     workflows: ["🧪 Tests & Quality with UV"]
     types:
       - completed
     branches: [ main ]
-  push:
-    branches: [ main ]
-    paths:
-      - '!src/**'
-      - '!tests/**'
-      - '!pyproject.toml'
-      - '!.github/workflows/test.yml'
-      - 'docs/**'
-      - 'README.md'
-      - '.github/workflows/**'
-      - 'Taskfile.yml'
-      - 'docker-compose.yml'
-      - 'Dockerfile'
   workflow_dispatch:
     inputs:
       version_type:
@@ -47,7 +40,8 @@ jobs:
   check-prerequisites:
     name: "🔍 Check Prerequisites"
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    # Only run if tests passed successfully OR manual trigger
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
       is_manual: ${{ steps.check.outputs.is_manual }}
@@ -85,37 +79,20 @@ jobs:
           COMMIT_MSG=$(git log --format=%B -n 1 $COMMIT_SHA)
           echo "Commit message: $COMMIT_MSG"
           
-          # Skip if this is a version bump commit
-          if [[ "$COMMIT_MSG" =~ ^(chore|bump|release):.*version.* ]]; then
+          # Skip if this is a version bump commit or release commit
+          if [[ "$COMMIT_MSG" =~ ^(chore|bump|release):.*version.* ]] || [[ "$COMMIT_MSG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
             echo "should_release=false" >> $GITHUB_OUTPUT
             echo "trigger_type=workflow_run" >> $GITHUB_OUTPUT
-            echo "⏭️ Skipping auto-release (version bump commit)"
+            echo "⏭️ Skipping auto-release (version bump or release commit)"
           elif [[ "$WORKFLOW_CONCLUSION" == "success" ]]; then
             echo "should_release=true" >> $GITHUB_OUTPUT
             echo "trigger_type=workflow_run" >> $GITHUB_OUTPUT
-            echo "✅ Tests passed, proceeding with auto-release"
+            echo "✅ Tests passed on main branch, proceeding with auto-release"
           else
             echo "should_release=false" >> $GITHUB_OUTPUT
             echo "trigger_type=workflow_run" >> $GITHUB_OUTPUT
             echo "❌ Tests failed, skipping auto-release"
           fi
-          
-        elif [[ "$EVENT_NAME" == "push" ]]; then
-          # Direct push trigger (non-code changes)
-          COMMIT_MSG=$(git log -1 --pretty=%B)
-          echo "Direct push commit: $COMMIT_MSG"
-          
-          # Skip if this is a version bump commit
-          if [[ "$COMMIT_MSG" =~ ^(chore|bump|release):.*version.* ]]; then
-            echo "should_release=false" >> $GITHUB_OUTPUT
-            echo "trigger_type=push" >> $GITHUB_OUTPUT
-            echo "⏭️ Skipping auto-release (version bump commit)"
-          else
-            echo "should_release=true" >> $GITHUB_OUTPUT
-            echo "trigger_type=push" >> $GITHUB_OUTPUT
-            echo "✅ Non-code changes detected, proceeding with auto-release"
-          fi
-        fi
         
         echo "is_manual=$IS_MANUAL" >> $GITHUB_OUTPUT
 
