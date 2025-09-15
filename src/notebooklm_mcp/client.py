@@ -323,7 +323,16 @@ class NotebookLMClient:
                     text = elem.text.strip()
                     if len(text) > 50 and not any(
                         skip in text.lower()
-                        for skip in ["ask about", "loading", "error", "sign in", "menu", "copy_all", "thumb_up", "thumb_down"]
+                        for skip in [
+                            "ask about",
+                            "loading",
+                            "error",
+                            "sign in",
+                            "menu",
+                            "copy_all",
+                            "thumb_up",
+                            "thumb_down",
+                        ]
                     ):
                         best_response = text
                         break
@@ -342,30 +351,41 @@ class NotebookLMClient:
             return response_text
 
         # Remove UI artifacts at the end
-        ui_artifacts = ["copy_all", "thumb_up", "thumb_down", "share", "more_options", "like", "dislike"]
+        ui_artifacts = [
+            "copy_all",
+            "thumb_up",
+            "thumb_down",
+            "share",
+            "more_options",
+            "like",
+            "dislike",
+        ]
         for artifact in ui_artifacts:
             if response_text.endswith(artifact):
-                response_text = response_text[:-len(artifact)].strip()
-        
+                response_text = response_text[: -len(artifact)].strip()
+
         # Remove multiple UI artifacts that might appear together
-        lines = response_text.split('\n')
+        lines = response_text.split("\n")
         cleaned_lines = []
-        
+
         for line in lines:
             line_clean = line.strip().lower()
             # Skip lines that are just UI artifacts
             if line_clean in ui_artifacts:
                 continue
             # Skip lines with multiple UI artifacts
-            if any(artifact in line_clean for artifact in ui_artifacts) and len(line_clean) < 50:
+            if (
+                any(artifact in line_clean for artifact in ui_artifacts)
+                and len(line_clean) < 50
+            ):
                 continue
             cleaned_lines.append(line)
-        
-        response_text = '\n'.join(cleaned_lines).strip()
+
+        response_text = "\n".join(cleaned_lines).strip()
 
         # Split by common delimiters that might separate user input from AI response
-        lines = response_text.split('\n')
-        
+        lines = response_text.split("\n")
+
         # If response starts with the user's message, try to find where AI response begins
         # Look for patterns that indicate the start of AI response
         ai_response_indicators = [
@@ -379,43 +399,45 @@ class NotebookLMClient:
             "To answer",
             # Common AI response starters
         ]
-        
+
         # Try to find the first line that looks like an AI response
         start_index = 0
         for i, line in enumerate(lines):
             line_clean = line.strip()
-            if line_clean and any(indicator in line_clean for indicator in ai_response_indicators):
+            if line_clean and any(
+                indicator in line_clean for indicator in ai_response_indicators
+            ):
                 start_index = i
                 break
             # If we find a line that's significantly longer and looks like content
-            elif len(line_clean) > 50 and not line_clean.endswith('?'):
+            elif len(line_clean) > 50 and not line_clean.endswith("?"):
                 start_index = i
                 break
-        
+
         # Join from the AI response start
-        cleaned_response = '\n'.join(lines[start_index:]).strip()
-        
+        cleaned_response = "\n".join(lines[start_index:]).strip()
+
         # If cleaning didn't work well, try a different approach
         if not cleaned_response or len(cleaned_response) < 50:
             # Look for the first substantial paragraph
-            paragraphs = response_text.split('\n\n')
+            paragraphs = response_text.split("\n\n")
             for paragraph in paragraphs:
                 if len(paragraph.strip()) > 100:  # Substantial content
                     cleaned_response = paragraph.strip()
                     break
-        
+
         # Fallback: if still no good content, return original but try to remove first line if it looks like user input
         if not cleaned_response or len(cleaned_response) < 50:
             if lines and len(lines) > 1:
                 first_line = lines[0].strip()
                 # If first line looks like a question or command, remove it
-                if first_line.endswith('?') or len(first_line) < 100:
-                    cleaned_response = '\n'.join(lines[1:]).strip()
+                if first_line.endswith("?") or len(first_line) < 100:
+                    cleaned_response = "\n".join(lines[1:]).strip()
                 else:
                     cleaned_response = response_text
             else:
                 cleaned_response = response_text
-        
+
         return cleaned_response
 
     async def navigate_to_notebook(self, notebook_id: str) -> str:
