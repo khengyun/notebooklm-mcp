@@ -106,7 +106,9 @@ def cli(ctx: click.Context, config: Optional[str], debug: bool) -> None:
         if debug:
             server_config.debug = True
         ctx.obj["config"] = server_config
-        ctx.obj["config_file"] = config or "notebooklm-config.json"  # Store config file path
+        ctx.obj["config_file"] = (
+            config or "notebooklm-config.json"
+        )  # Store config file path
     except Exception as e:
         console.print(f"[red]Configuration error: {e}[/red]")
         sys.exit(1)
@@ -203,16 +205,30 @@ def init(notebook_url: str, config_path: str, headless: bool) -> None:
 @click.option("--headless", is_flag=True, help="Run in headless mode")
 @click.option("--port", type=int, default=8000, help="Server port (default: 8000)")
 @click.option("--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)")
-@click.option("--root-dir", help="Root directory for server operations (default: current directory)")
-@click.option("--transport", type=click.Choice(['stdio', 'http', 'sse']), default='stdio', help="Transport protocol (default: stdio)")
+@click.option(
+    "--root-dir",
+    help="Root directory for server operations (default: current directory)",
+)
+@click.option(
+    "--transport",
+    type=click.Choice(["stdio", "http", "sse"]),
+    default="stdio",
+    help="Transport protocol (default: stdio)",
+)
 @click.pass_context
 def server(
-    ctx: click.Context, notebook: Optional[str], headless: bool, port: int, host: str, root_dir: Optional[str], transport: str
+    ctx: click.Context,
+    notebook: Optional[str],
+    headless: bool,
+    port: int,
+    host: str,
+    root_dir: Optional[str],
+    transport: str,
 ) -> None:
     """Start the FastMCP v2 NotebookLM server"""
     import os
     from pathlib import Path
-    
+
     config: ServerConfig = ctx.obj["config"]
 
     # Auto-detect current working directory as root
@@ -220,7 +236,7 @@ def server(
         working_dir = Path(root_dir).resolve()
     else:
         working_dir = Path.cwd()
-    
+
     # Ensure root directory exists
     if not working_dir.exists():
         console.print(f"[red]Root directory does not exist: {working_dir}[/red]")
@@ -253,19 +269,23 @@ def server(
     try:
         # Use FastMCP v2 implementation only
         server = NotebookLMFastMCP(config)
-        
+
         if transport == "http":
-            console.print(f"[green]🌐 FastMCP HTTP server will be available at: http://{host}:{port}/mcp/[/green]")
+            console.print(
+                f"[green]🌐 FastMCP HTTP server will be available at: http://{host}:{port}/mcp/[/green]"
+            )
         elif transport == "sse":
-            console.print(f"[green]🌐 FastMCP SSE server will be available at: http://{host}:{port}/[/green]")
-        
+            console.print(
+                f"[green]🌐 FastMCP SSE server will be available at: http://{host}:{port}/[/green]"
+            )
+
         asyncio.run(server.start(transport=transport, host=host, port=port))
-        
+
     except KeyboardInterrupt:
         console.print("\n[yellow]Server stopped by user[/yellow]")
     except Exception as e:
         console.print(f"[red]Server error: {e}[/red]")
-        
+
         # Better authentication error handling
         if "Authentication required" in str(e):
             console.print(
@@ -277,12 +297,13 @@ def server(
                     f"   [cyan]notebooklm-mcp --config {ctx.obj.get('config_file', 'notebooklm-config.json')} server[/cyan]\n\n"
                     "2. Complete Google login in the browser\n"
                     "3. Then retry with --headless flag for production use",
-                    title="🔑 Authentication Help"
+                    title="🔑 Authentication Help",
                 )
             )
-        
+
         if config.debug:
             import traceback
+
             console.print(traceback.format_exc())
         sys.exit(1)
 
