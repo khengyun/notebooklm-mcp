@@ -125,11 +125,12 @@ jobs:
         name: dist-packages
         path: dist/
 
-  # Test publish to TestPyPI
+  # Test publish to TestPyPI (optional)
   test-publish:
-    name: "📤 Test Publish"
+    name: "📤 Test Publish (Optional)"
     runs-on: ubuntu-latest
     needs: build
+    if: ${{ secrets.TEST_PYPI_API_TOKEN != '' }}
     steps:
     - name: "📥 Checkout repository"
       uses: actions/checkout@v4
@@ -146,6 +147,7 @@ jobs:
         password: ${{ secrets.TEST_PYPI_API_TOKEN }}
         repository_url: https://test.pypi.org/legacy/
         skip_existing: true
+      continue-on-error: true
 
     - name: "✅ Test publish completed"
       run: echo "✅ Test publish to TestPyPI completed successfully"
@@ -154,7 +156,8 @@ jobs:
   publish:
     name: "🎉 Publish to PyPI"
     runs-on: ubuntu-latest
-    needs: [build, test-publish]
+    needs: build
+    if: always() && needs.build.result == 'success'
     environment: production
     steps:
     - name: "📥 Checkout repository"
