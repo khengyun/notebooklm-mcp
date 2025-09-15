@@ -50,6 +50,9 @@ dependencies = [
     "loguru>=0.7.2",
     "typing-extensions>=4.0.0",
     "psutil>=5.9.0",
+    
+    # TOML parsing (for Python < 3.11 compatibility)
+    "tomli>=2.0.0; python_version<'3.11'",
 ]
 
 # Modern dependency groups (PEP 735) - UV native support

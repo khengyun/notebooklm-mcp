@@ -141,8 +141,8 @@ jobs:
       run: |
         export PATH="$HOME/.cargo/bin:$PATH"
         
-        # Get current version
-        CURRENT_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+        # Get current version using tomli (compatible with Python 3.10)
+        CURRENT_VERSION=$(uv run python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
         echo "Current version: $CURRENT_VERSION"
         
         # Calculate new version
@@ -176,8 +176,8 @@ jobs:
         # Update pyproject.toml
         sed -i "s/version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" pyproject.toml
         
-        # Verify update
-        UPDATED_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+        # Verify update using tomli
+        UPDATED_VERSION=$(uv run python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
         echo "Updated version: $UPDATED_VERSION"
         
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
