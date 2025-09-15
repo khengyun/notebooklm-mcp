@@ -1,5 +1,7 @@
 """
 Browser automation client for NotebookLM interactions
+
+Enhanced with improved response parsing for cleaner AI responses.
 """
 
 import asyncio
