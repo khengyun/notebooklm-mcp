@@ -6,7 +6,7 @@
 [![FastMCP v2](https://img.shields.io/badge/FastMCP-v2.0+-green.svg)](https://github.com/jlowin/fastmcp)
 [![UV](https://img.shields.io/badge/UV-latest-orange.svg)](https://github.com/astral-sh/uv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://github.com/khengyun/notebooklm-mcp/workflows/Tests%20%26%20Quality%20with%20UV/badge.svg)](https://github.com/khengyun/notebooklm-mcp/actions)
+[![Tests](https://github.com/khengyun/notebooklm-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/khengyun/notebooklm-mcp/actions)
 [![codecov](https://codecov.io/gh/khengyun/notebooklm-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/khengyun/notebooklm-mcp)
 
 ## ✨ Key Features
