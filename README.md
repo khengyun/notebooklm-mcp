@@ -1,7 +1,8 @@
 # 🚀 NotebookLM FastMCP v2 Server
 
-**Modern FastMCP v2 server for NotebookLM automation with UV Python manager**
+**Professional MCP server for Google NotebookLM automation • Available on PyPI • Production Ready**
 
+[![PyPI](https://img.shields.io/pypi/v/notebooklm-mcp.svg)](https://pypi.org/project/notebooklm-mcp/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastMCP v2](https://img.shields.io/badge/FastMCP-v2.0+-green.svg)](https://github.com/jlowin/fastmcp)
 [![UV](https://img.shields.io/badge/UV-latest-orange.svg)](https://github.com/astral-sh/uv)
@@ -19,90 +20,58 @@
 - **📊 Rich CLI**: Beautiful terminal interface with Taskfile automation
 - **🐳 Production Ready**: Docker support with monitoring
 
-## 🏃‍♂️ Quick Start with UV
+## 🏃‍♂️ Quick Start
 
-### Prerequisites
+### 🎯 For End Users (Recommended)
 
-Install UV (if not already installed):
 ```bash
-# Install UV
+# Install UV (modern Python package manager)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Or with pip
-pip install uv
+# Install NotebookLM MCP from PyPI
+uv add notebooklm-mcp
+
+# Initialize with your NotebookLM URL
+uv run notebooklm-mcp init https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID
 ```
 
-### 1. Clone & Setup
+**What happens after `init`:**
+
+- ✅ Creates `notebooklm-config.json` with your settings
+- ✅ Creates `chrome_profile_notebooklm/` folder for persistent authentication
+- ✅ Opens browser for one-time Google login (if needed)
+- ✅ Saves session for future headless operation
+
+```bash
+# Start server (STDIO for MCP clients)
+uv run notebooklm-mcp --config notebooklm-config.json server
+
+# Start HTTP server for web testing
+uv run notebooklm-mcp --config notebooklm-config.json server --transport http --port 8001
+
+# Start with custom config file
+uv run notebooklm-mcp --config my-custom-config.json server
+
+# Interactive chat mode
+uv run notebooklm-mcp --config notebooklm-config.json chat
+```
+
+### 👨‍💻 For Developers
+
+If you're contributing to this project, check out our [Taskfile](./Taskfile.yml) for enhanced developer experience:
 
 ```bash
 git clone https://github.com/khengyun/notebooklm-mcp.git
 cd notebooklm-mcp
 
-# Complete setup with UV
+# Complete setup with development tools
 task setup
-```
 
-### 2. Development Setup
-
-```bash
-# Install development dependencies
-task install-dev
-
-# Show all available tasks
+# Show all available development tasks
 task --list
 ```
 
-### 3. Start Server
-
-```bash
-# STDIO (for MCP clients)
-task server-stdio
-
-# HTTP (for web testing)
-task server-http
-
-# SSE (for streaming)
-task server-sse
-```
-
-## 🔧 UV Development Workflow
-
-### Core Commands
-
-```bash
-# 📦 Dependency Management
-task deps-add -- requests       # Add dependency
-task deps-add-dev -- pytest     # Add dev dependency
-task deps-remove -- requests    # Remove dependency
-task deps-list                  # List dependencies
-task deps-update                # Update all dependencies
-
-# 🧪 Testing
-task test                       # Run all tests
-task test-quick                 # Quick validation test
-task test-coverage              # Coverage analysis
-task enforce-test               # MANDATORY after function changes
-
-# 🔍 Code Quality
-task lint                       # Run all linting
-task format                     # Format code (Black + isort + Ruff)
-
-# 🏗️ Build & Release
-task build                      # Build package
-task clean                      # Clean artifacts
-notebooklm-mcp server
-
-# Start HTTP server for web testing
-notebooklm-mcp server --transport http --port 8001 --headless
-
-# Start with specific notebook
-notebooklm-mcp server --notebook YOUR_NOTEBOOK_ID
-
-# Start in GUI mode for debugging  
-notebooklm-mcp server
-```
-
-## 🔧 Traditional Installation (Alternative)
+## 🔧 Alternative Installation
 
 If you prefer pip over UV:
 
@@ -114,10 +83,29 @@ pip install notebooklm-mcp
 notebooklm-mcp init https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID
 
 # Start server
-notebooklm-mcp server
+notebooklm-mcp --config notebooklm-config.json server
 ```
 
-## 🛠️ Available Tools
+## � Project Structure After Init
+
+After running `init`, your working directory will contain:
+
+```text
+your-project/
+├── notebooklm-config.json          # Configuration file
+├── chrome_profile_notebooklm/      # Browser profile (persistent auth)
+│   ├── Default/                    # Chrome profile data
+│   ├── SingletonSocket             # Session files
+│   └── ...                         # Other Chrome data
+└── your-other-files
+```
+
+**Key files:**
+
+- **`notebooklm-config.json`**: Contains notebook ID, server settings, auth configuration
+- **`chrome_profile_notebooklm/`**: Stores Google authentication session (enables headless operation)
+
+## �🛠️ Available Tools
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
@@ -129,6 +117,41 @@ notebooklm-mcp server
 | `get_default_notebook` | Current notebook | None |
 | `set_default_notebook` | Set default | `notebook_id: str` |
 | `get_quick_response` | Instant response | None |
+
+## 👨‍💻 Developer Workflow
+
+For contributors and advanced users who want enhanced productivity, we provide a comprehensive Taskfile with 20+ automation tasks:
+
+```bash
+# 📦 Dependency Management
+task deps-add -- requests       # Add dependency
+task deps-add-dev -- pytest     # Add dev dependency
+task deps-remove -- requests    # Remove dependency
+task deps-list                  # List dependencies
+task deps-update                # Update all dependencies
+
+# 🧪 Testing & Quality
+task test                       # Run all tests
+task test-quick                 # Quick validation test
+task test-coverage              # Coverage analysis
+task enforce-test               # MANDATORY after function changes
+task lint                       # Run all linting
+task format                     # Format code (Black + isort + Ruff)
+
+# 🏗️ Build & Release
+task build                      # Build package
+task clean                      # Clean artifacts
+
+# 🚀 Server Commands
+task server-stdio              # STDIO server
+task server-http               # HTTP server
+task server-sse                # SSE server
+
+# Show all available tasks
+task --list
+```
+
+> **💡 Pro Tip**: Install [Task](https://taskfile.dev/) for the best developer experience: `go install github.com/go-task/task/v3/cmd/task@latest`
 
 ## 🌐 Transport Options
 
@@ -212,21 +235,23 @@ class NotebookLMTool(BaseTool):
 ## 🔒 Authentication
 
 ### Automatic Setup
+
 ```bash
 # First time - opens browser for login
 notebooklm-mcp init https://notebooklm.google.com/notebook/abc123
 
 # Subsequent runs - uses saved session
-notebooklm-mcp server --headless
+notebooklm-mcp --config notebooklm-config.json server
 ```
 
 ### Manual Setup
+
 ```bash
 # Interactive browser login
-notebooklm-mcp server
+notebooklm-mcp --config notebooklm-config.json server
 
-# After login, switch to headless
-notebooklm-mcp server --headless
+# Check connection
+notebooklm-mcp --config notebooklm-config.json test --notebook YOUR_NOTEBOOK_ID
 ```
 
 ## 🐳 Docker Deployment
@@ -304,31 +329,44 @@ export NOTEBOOKLM_DEBUG=false
 ```bash
 git clone https://github.com/khengyun/notebooklm-mcp
 cd notebooklm-mcp
+
+# With UV (recommended)
+uv sync --all-groups
+
+# Or with pip
 pip install -e ".[dev]"
 ```
 
 ### Testing
 
 ```bash
-# Run tests
-pytest
+# Run tests with UV
+uv run pytest
 
 # With coverage
-pytest --cov=notebooklm_mcp
+uv run pytest --cov=notebooklm_mcp
 
-# Integration tests
-pytest tests/test_integration.py
+# Integration tests  
+uv run pytest tests/test_integration.py
+
+# Or use Taskfile for development
+task test
+task test-coverage
 ```
 
 ### Code Quality
 
 ```bash
-# Format code
-black src/ tests/
-ruff check src/ tests/
+# Format code with UV
+uv run black src/ tests/
+uv run ruff check src/ tests/
 
 # Type checking
-mypy src/
+uv run mypy src/
+
+# Or use Taskfile shortcuts
+task format
+task lint
 ```
 
 ## 📚 Documentation
