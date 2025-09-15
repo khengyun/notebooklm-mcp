@@ -1,0 +1,268 @@
+name: "🚀 Auto Release on Main"
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
+
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
+  QT_QPA_PLATFORM: offscreen
+  UV_PYTHON: python3.10
+
+jobs:
+  # Check if this is a version bump commit (skip auto-release)
+  check-commit:
+    name: "🔍 Check Commit Type"
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      is_manual: ${{ steps.check.outputs.is_manual }}
+    steps:
+    - name: "📥 Checkout repository"
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+
+    - name: "🔍 Check commit message"
+      id: check
+      run: |
+        COMMIT_MSG=$(git log -1 --pretty=%B)
+        IS_MANUAL="${{ github.event_name == 'workflow_dispatch' }}"
+        
+        echo "Commit message: $COMMIT_MSG"
+        echo "Manual trigger: $IS_MANUAL"
+        
+        # Skip if this is a version bump commit
+        if [[ "$COMMIT_MSG" =~ ^(chore|bump|release):.*version.* ]]; then
+          echo "should_release=false" >> $GITHUB_OUTPUT
+          echo "⏭️ Skipping auto-release (version bump commit)"
+        elif [[ "$IS_MANUAL" == "true" ]]; then
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          echo "🚀 Manual release triggered"
+        else
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          echo "✅ Regular commit, proceeding with auto-release"
+        fi
+        
+        echo "is_manual=$IS_MANUAL" >> $GITHUB_OUTPUT
+
+  # Run full test suite
+  test:
+    name: "🧪 Full Test Suite"
+    runs-on: ubuntu-latest
+    needs: check-commit
+    if: needs.check-commit.outputs.should_release == 'true'
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+    - name: "📥 Checkout repository"
+      uses: actions/checkout@v4
+
+    - name: "⚡ Install UV"
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        export PATH="$HOME/.cargo/bin:$PATH"
+
+    - name: "🐍 Set up Python ${{ matrix.python-version }}"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv python install ${{ matrix.python-version }}
+
+    - name: "📦 Install dependencies"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv sync --all-groups
+      env:
+        UV_PYTHON: ${{ matrix.python-version }}
+
+    - name: "🌐 Install Chrome"
+      run: |
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+
+    - name: "🔍 Quality checks"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        echo "🦀 Running Ruff linter..."
+        uv run ruff check src/ tests/
+        echo "⚫ Checking Black formatting..."
+        uv run black --check src/ tests/
+        echo "📊 Checking import sorting..."
+        uv run isort --check-only src/ tests/
+
+    - name: "🧪 Run tests with coverage"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        echo "🧪 Running full test suite..."
+        uv run coverage run --source=src/notebooklm_mcp -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py -v
+        uv run coverage report --show-missing
+        echo "✅ Tests passed for Python ${{ matrix.python-version }}"
+      env:
+        QT_QPA_PLATFORM: offscreen
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
+
+  # Version bump and release
+  auto-release:
+    name: "🚀 Auto Version Bump & Release"
+    runs-on: ubuntu-latest
+    needs: [check-commit, test]
+    if: always() && needs.check-commit.outputs.should_release == 'true' && needs.test.result == 'success'
+    outputs:
+      new_version: ${{ steps.bump.outputs.new_version }}
+      tag_name: ${{ steps.bump.outputs.tag_name }}
+    steps:
+    - name: "📥 Checkout repository"
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: "⚡ Install UV"
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        export PATH="$HOME/.cargo/bin:$PATH"
+
+    - name: "🐍 Set up Python"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv python install 3.10
+
+    - name: "📦 Install dependencies"
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        uv sync --all-groups
+
+    - name: "📈 Determine version bump type"
+      id: version-type
+      run: |
+        if [[ "${{ needs.check-commit.outputs.is_manual }}" == "true" ]]; then
+          VERSION_TYPE="${{ github.event.inputs.version_type }}"
+        else
+          # Auto-determine based on commit messages since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
+          
+          if echo "$COMMITS" | grep -i "breaking\|major"; then
+            VERSION_TYPE="major"
+          elif echo "$COMMITS" | grep -i "feat\|feature\|minor"; then
+            VERSION_TYPE="minor"  
+          else
+            VERSION_TYPE="patch"
+          fi
+        fi
+        
+        echo "version_type=$VERSION_TYPE" >> $GITHUB_OUTPUT
+        echo "🔖 Version bump type: $VERSION_TYPE"
+
+    - name: "📝 Bump version"
+      id: bump
+      run: |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        
+        # Get current version
+        CURRENT_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+        echo "Current version: $CURRENT_VERSION"
+        
+        # Calculate new version
+        VERSION_TYPE="${{ steps.version-type.outputs.version_type }}"
+        IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
+        MAJOR=${VERSION_PARTS[0]}
+        MINOR=${VERSION_PARTS[1]}
+        PATCH=${VERSION_PARTS[2]}
+        
+        case $VERSION_TYPE in
+          major)
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+            ;;
+          minor)
+            MINOR=$((MINOR + 1))
+            PATCH=0
+            ;;
+          patch)
+            PATCH=$((PATCH + 1))
+            ;;
+        esac
+        
+        NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+        TAG_NAME="v$NEW_VERSION"
+        
+        echo "New version: $NEW_VERSION"
+        echo "Tag name: $TAG_NAME"
+        
+        # Update pyproject.toml
+        sed -i "s/version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" pyproject.toml
+        
+        # Verify update
+        UPDATED_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+        echo "Updated version: $UPDATED_VERSION"
+        
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+    - name: "📝 Commit version bump"
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add pyproject.toml
+        git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }}"
+        git push
+
+    - name: "🏷️ Create and push tag"
+      run: |
+        git tag ${{ steps.bump.outputs.tag_name }}
+        git push origin ${{ steps.bump.outputs.tag_name }}
+        echo "✅ Created and pushed tag: ${{ steps.bump.outputs.tag_name }}"
+
+    - name: "🚀 Trigger release workflow"
+      run: |
+        echo "🚀 Release workflow will be triggered by the new tag: ${{ steps.bump.outputs.tag_name }}"
+        echo "📦 Package version ${{ steps.bump.outputs.new_version }} will be published to PyPI"
+
+  # Summary
+  summary:
+    name: "📋 Auto-Release Summary"
+    runs-on: ubuntu-latest
+    needs: [check-commit, test, auto-release]
+    if: always()
+    steps:
+    - name: "📋 Summary"
+      run: |
+        echo "## 🚀 Auto-Release Summary"
+        echo "**Should Release:** ${{ needs.check-commit.outputs.should_release }}"
+        echo "**Test Result:** ${{ needs.test.result }}"
+        echo "**Release Result:** ${{ needs.auto-release.result }}"
+        
+        if [[ "${{ needs.auto-release.result }}" == "success" ]]; then
+          echo "✅ **Success!** New version ${{ needs.auto-release.outputs.new_version }} created"
+          echo "🏷️ **Tag:** ${{ needs.auto-release.outputs.tag_name }}"
+          echo "📦 **Release workflow triggered automatically**"
+        elif [[ "${{ needs.check-commit.outputs.should_release }}" == "false" ]]; then
+          echo "⏭️ **Skipped** - Version bump commit detected"
+        elif [[ "${{ needs.test.result }}" != "success" ]]; then
+          echo "❌ **Failed** - Tests did not pass"
+        else
+          echo "❌ **Failed** - Auto-release encountered an error"
+        fi
