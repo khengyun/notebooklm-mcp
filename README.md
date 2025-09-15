@@ -1,6 +1,7 @@
-# 🚀 NotebookLM FastMCP v2 Server
+# 🚀 NotebookLM MCP
 
 **Professional MCP server for Google NotebookLM automation • Available on PyPI • Production Ready**
+**Professional Automation Google NotebookLM automation**
 
 [![PyPI](https://img.shields.io/pypi/v/notebooklm-mcp.svg)](https://pypi.org/project/notebooklm-mcp/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
