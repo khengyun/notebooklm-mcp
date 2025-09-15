@@ -6,6 +6,8 @@ on:
       - 'v*'
   release:
     types: [created, published]
+  repository_dispatch:
+    types: [release-trigger]
   workflow_dispatch:
     inputs:
       tag_name:
