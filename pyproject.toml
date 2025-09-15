@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "notebooklm-mcp"
-version = "2.0.8"
+version = "2.0.9"
 description = "FastMCP v2 server for NotebookLM automation with modern async support"
 readme = "README.md"
 license = "MIT"
