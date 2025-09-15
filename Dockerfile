@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install system dependencies for Chrome
+# Install system dependencies for Chrome and UV
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg2 \
@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y \
     curl \
     unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install UV Python manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.cargo/bin:$PATH"
 
 # Install Google Chrome
 RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
@@ -32,18 +36,18 @@ WORKDIR /app
 RUN groupadd -r notebooklm && useradd -r -g notebooklm notebooklm
 RUN chown -R notebooklm:notebooklm /app
 
-# Copy requirements first for better caching
-COPY requirements.txt pyproject.toml ./
+# Copy project files for UV
+COPY pyproject.toml uv.lock ./
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies with UV
+RUN uv sync --all-groups
 
 # Copy source code
 COPY src/ ./src/
 COPY examples/ ./examples/
 
-# Install package in development mode
-RUN pip install -e .
+# Install package with UV
+RUN uv pip install -e .
 
 # Create chrome profile directory with proper permissions
 RUN mkdir -p /app/chrome_profile && chown -R notebooklm:notebooklm /app/chrome_profile
@@ -53,15 +57,15 @@ USER notebooklm
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV NOTEBOOKLM_HEADLESS=true
-ENV NOTEBOOKLM_PROFILE_DIR=/app/chrome_profile
+ENV UV_PYTHON=python3.11
+ENV NOTEBOOKLM_CONFIG_FILE=/app/notebooklm-config.json
 
-# Expose MCP port (if needed for non-STDIO mode)
-EXPOSE 8000
+# Expose MCP ports
+EXPOSE 8001 8002
 
-# Health check
+# Health check with UV
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "from notebooklm_mcp.config import ServerConfig; ServerConfig().validate()" || exit 1
+    CMD uv run python -c "from notebooklm_mcp.config import ServerConfig; print('Config valid') if ServerConfig.from_file('/app/notebooklm-config.json') else exit(1)" || exit 1
 
-# Default command
-CMD ["notebooklm-mcp", "--config", "/app/config.json", "server", "--headless"]
+# Default command - STDIO mode for MCP
+CMD ["uv", "run", "python", "-m", "notebooklm_mcp.cli", "--config", "/app/notebooklm-config.json", "server"]

@@ -1,224 +1,444 @@
-# 🐳 Docker Deployment Guide
+# 🐳 Docker Deployment Guide# 🐳 Docker Deployment Guide
 
-This guide covers deploying NotebookLM MCP Server using Docker and Docker Compose.
 
-## 🚀 Quick Start
 
-### **Environment Setup**
+This guide covers deploying NotebookLM MCP Server using Docker with UV Python manager.This guide covers deploying NotebookLM MCP Server using Docker and Docker Compose.
 
-Create a `.env` file:
 
-```bash
+
+## 📋 Prerequisites## 🚀 Quick Start
+
+
+
+1. **Docker & Docker Compose** installed### **Environment Setup**
+
+2. **notebooklm-config.json** file configured  
+
+3. **NotebookLM URL** with your notebook IDCreate a `.env` file:
+
+
+
+## 🚀 Quick Start```bash
+
 # Required: Your NotebookLM notebook ID
-NOTEBOOKLM_NOTEBOOK_ID=your-notebook-id-here
 
-# Optional: Additional settings
-NOTEBOOKLM_DEBUG=false
-NOTEBOOKLM_TIMEOUT=60
+### 1. Create ConfigurationNOTEBOOKLM_NOTEBOOK_ID=your-notebook-id-here
+
+
+
+```bash# Optional: Additional settings
+
+# Copy example configNOTEBOOKLM_DEBUG=false
+
+cp notebooklm-config.example.json notebooklm-config.jsonNOTEBOOKLM_TIMEOUT=60
+
 ```
 
-### **Basic Docker Run**
+# Edit with your notebook ID
+
+nano notebooklm-config.json### **Basic Docker Run**
+
+```
 
 ```bash
-# Build image
-docker build -t notebooklm-mcp .
 
-# Run container
-docker run -d \
-  --name notebooklm-mcp \
-  -e NOTEBOOKLM_NOTEBOOK_ID="your-notebook-id" \
-  -v notebooklm_profile:/app/chrome_profile \
-  notebooklm-mcp:latest
+Update `default_notebook_id`:# Build image
+
+```jsondocker build -t notebooklm-mcp .
+
+{
+
+  "default_notebook_id": "your-actual-notebook-id",# Run container
+
+  "headless": true,docker run -d \
+
+  "profile_dir": "/app/chrome_profile",  --name notebooklm-mcp \
+
+  "timeout": 60  -e NOTEBOOKLM_NOTEBOOK_ID="your-notebook-id" \
+
+}  -v notebooklm_profile:/app/chrome_profile \
+
+```  notebooklm-mcp:latest
+
 ```
+
+### 2. Run with Docker Compose
 
 ### **Docker Compose (Recommended)**
 
 ```bash
-# Start services
+
+# Start STDIO mode (for MCP clients)```bash
+
+docker-compose up -d# Start services
+
 docker-compose up -d
 
-# View logs
+# Check logs
+
+docker-compose logs -f notebooklm-mcp# View logs
+
 docker-compose logs -f notebooklm-mcp
 
 # Stop services
-docker-compose down
+
+docker-compose down# Stop services
+
+```docker-compose down
+
 ```
+
+### 3. Different Transport Modes
 
 ## 📊 **Monitoring Setup**
 
-Enable monitoring stack with Prometheus and Grafana:
+**STDIO Mode (Default)**:
 
-```bash
-# Start with monitoring
+```bashEnable monitoring stack with Prometheus and Grafana:
+
+# No ports exposed - for MCP protocol
+
+docker-compose up -d```bash
+
+```# Start with monitoring
+
 docker-compose --profile monitoring up -d
 
-# Access Grafana: http://localhost:3000
-# Username: admin, Password: admin
-```
+**HTTP Mode**:
+
+```bash# Access Grafana: http://localhost:3000
+
+# Edit docker-compose.yml to uncomment:# Username: admin, Password: admin
+
+ports:```
+
+  - "8001:8001"
 
 ## 🔧 **Configuration**
 
-### **Environment Variables**
+# Restart services
+
+docker-compose up -d### **Environment Variables**
+
+```
 
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `NOTEBOOKLM_NOTEBOOK_ID` | None | Target notebook ID (required) |
-| `NOTEBOOKLM_HEADLESS` | true | Run browser in headless mode |
-| `NOTEBOOKLM_DEBUG` | false | Enable debug logging |
-| `NOTEBOOKLM_TIMEOUT` | 60 | Browser timeout in seconds |
+
+**SSE Mode**:|----------|---------|-------------|
+
+```bash| `NOTEBOOKLM_NOTEBOOK_ID` | None | Target notebook ID (required) |
+
+# Edit docker-compose.yml ports:| `NOTEBOOKLM_HEADLESS` | true | Run browser in headless mode |
+
+ports:| `NOTEBOOKLM_DEBUG` | false | Enable debug logging |
+
+  - "8002:8002"| `NOTEBOOKLM_TIMEOUT` | 60 | Browser timeout in seconds |
+
 | `NOTEBOOKLM_PROFILE_DIR` | /app/chrome_profile | Chrome profile directory |
 
-### **Volume Mounts**
+# Restart services
+
+docker-compose up -d### **Volume Mounts**
+
+```
 
 - `chrome_profile:/app/chrome_profile` - Persistent browser session
-- `./config.json:/app/config.json:ro` - Configuration file (optional)
+
+## 🔧 Configuration- `./config.json:/app/config.json:ro` - Configuration file (optional)
+
 - `./scripts:/app/scripts:ro` - Custom scripts (optional)
+
+### Volume Mounts (REQUIRED)
 
 ## 🏭 **Production Deployment**
 
-### **Kubernetes**
+| Volume | Purpose | Mount Point |
 
-```yaml
+|--------|---------|-------------|### **Kubernetes**
+
+| `notebooklm-config.json` | **Configuration file** | `/app/notebooklm-config.json` |
+
+| `chrome_profile` | Session persistence | `/app/chrome_profile` |```yaml
+
 apiVersion: apps/v1
-kind: Deployment
+
+### Environment Variableskind: Deployment
+
 metadata:
-  name: notebooklm-mcp
-  labels:
-    app: notebooklm-mcp
-spec:
-  replicas: 1
+
+```yaml  name: notebooklm-mcp
+
+environment:  labels:
+
+  - UV_PYTHON=python3.10    app: notebooklm-mcp
+
+  - NOTEBOOKLM_CONFIG_FILE=/app/notebooklm-config.jsonspec:
+
+```  replicas: 1
+
   selector:
-    matchLabels:
+
+## 🛠️ Development    matchLabels:
+
       app: notebooklm-mcp
-  template:
+
+### Build Custom Image  template:
+
     metadata:
-      labels:
-        app: notebooklm-mcp
-    spec:
+
+```bash      labels:
+
+# Build with UV        app: notebooklm-mcp
+
+docker build -t notebooklm-mcp:dev .    spec:
+
       containers:
-      - name: notebooklm-mcp
-        image: notebooklm-mcp:latest
-        env:
-        - name: NOTEBOOKLM_HEADLESS
-          value: "true"
+
+# Test locally      - name: notebooklm-mcp
+
+docker run --rm \        image: notebooklm-mcp:latest
+
+  -v $(pwd)/notebooklm-config.json:/app/notebooklm-config.json \        env:
+
+  notebooklm-mcp:dev        - name: NOTEBOOKLM_HEADLESS
+
+```          value: "true"
+
         - name: NOTEBOOKLM_NOTEBOOK_ID
-          valueFrom:
+
+### Debug Container          valueFrom:
+
             secretKeyRef:
-              name: notebooklm-config
-              key: notebook-id
-        volumeMounts:
+
+```bash              name: notebooklm-config
+
+# Interactive shell              key: notebook-id
+
+docker-compose run --rm notebooklm-mcp bash        volumeMounts:
+
         - name: chrome-profile
-          mountPath: /app/chrome_profile
-        resources:
+
+# Check UV          mountPath: /app/chrome_profile
+
+docker-compose exec notebooklm-mcp uv --version        resources:
+
           limits:
-            cpu: 2000m
-            memory: 2Gi
-          requests:
-            cpu: 500m
-            memory: 512Mi
-        livenessProbe:
+
+# Test config            cpu: 2000m
+
+docker-compose exec notebooklm-mcp uv run python -c "            memory: 2Gi
+
+from notebooklm_mcp.config import ServerConfig          requests:
+
+print(ServerConfig.from_file('/app/notebooklm-config.json'))            cpu: 500m
+
+"            memory: 512Mi
+
+```        livenessProbe:
+
           exec:
-            command:
+
+## 🔍 Troubleshooting            command:
+
             - python
-            - -c
+
+### Common Issues            - -c
+
             - "from notebooklm_mcp.config import ServerConfig; ServerConfig().validate()"
-          initialDelaySeconds: 30
-          periodSeconds: 30
-        readinessProbe:
-          exec:
+
+**1. Config file not found:**          initialDelaySeconds: 30
+
+```bash          periodSeconds: 30
+
+# Check mount        readinessProbe:
+
+docker-compose exec notebooklm-mcp ls -la /app/notebooklm-config.json          exec:
+
             command:
-            - python
-            - -c
-            - "from notebooklm_mcp.config import ServerConfig; ServerConfig().validate()"
+
+# Verify content              - python
+
+docker-compose exec notebooklm-mcp cat /app/notebooklm-config.json            - -c
+
+```            - "from notebooklm_mcp.config import ServerConfig; ServerConfig().validate()"
+
           initialDelaySeconds: 5
-          periodSeconds: 10
-      volumes:
-      - name: chrome-profile
-        persistentVolumeClaim:
+
+**2. Chrome issues:**          periodSeconds: 10
+
+```bash      volumes:
+
+# Check Chrome      - name: chrome-profile
+
+docker-compose exec notebooklm-mcp google-chrome --version        persistentVolumeClaim:
+
           claimName: chrome-profile-pvc
----
-apiVersion: v1
-kind: PersistentVolumeClaim
+
+# Test ChromeDriver---
+
+docker-compose exec notebooklm-mcp chromedriver --versionapiVersion: v1
+
+```kind: PersistentVolumeClaim
+
 metadata:
-  name: chrome-profile-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
+
+**3. Permission issues:**  name: chrome-profile-pvc
+
+```bashspec:
+
+# Check profile directory  accessModes:
+
+docker-compose exec notebooklm-mcp ls -la /app/chrome_profile/    - ReadWriteOnce
+
+```  resources:
+
     requests:
-      storage: 1Gi
+
+### Health Checks      storage: 1Gi
+
 ```
 
-### **Docker Swarm**
+```bash
+
+# Check status### **Docker Swarm**
+
+docker-compose ps
 
 ```yaml
-version: '3.8'
 
-services:
-  notebooklm-mcp:
-    image: notebooklm-mcp:latest
-    deploy:
-      replicas: 1
+# Manual health checkversion: '3.8'
+
+docker-compose exec notebooklm-mcp uv run python -c "
+
+from notebooklm_mcp.config import ServerConfigservices:
+
+ServerConfig.from_file('/app/notebooklm-config.json').validate()  notebooklm-mcp:
+
+print('✅ Config valid')    image: notebooklm-mcp:latest
+
+"    deploy:
+
+```      replicas: 1
+
       restart_policy:
-        condition: on-failure
+
+## 📈 Performance Benefits        condition: on-failure
+
         delay: 5s
-        max_attempts: 3
+
+### UV vs pip in Docker        max_attempts: 3
+
       resources:
-        limits:
-          cpus: '2.0'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
+
+| Metric | pip | UV | Improvement |        limits:
+
+|--------|-----|----|-----------|           cpus: '2.0'
+
+| **Build time** | 3-5 min | 1-2 min | **2-3x faster** |          memory: 2G
+
+| **Install time** | 45-90s | 5-15s | **5-10x faster** |        reservations:
+
+| **Startup time** | 15-30s | 5-10s | **2-3x faster** |          cpus: '0.5'
+
           memory: 512M
-    environment:
+
+### Caching Strategy    environment:
+
       - NOTEBOOKLM_HEADLESS=true
-      - NOTEBOOKLM_NOTEBOOK_ID=${NOTEBOOKLM_NOTEBOOK_ID}
-    volumes:
-      - chrome_profile:/app/chrome_profile
-    networks:
+
+```dockerfile      - NOTEBOOKLM_NOTEBOOK_ID=${NOTEBOOKLM_NOTEBOOK_ID}
+
+# UV lockfile for better caching    volumes:
+
+COPY pyproject.toml uv.lock ./      - chrome_profile:/app/chrome_profile
+
+RUN uv sync --all-groups    networks:
+
       - notebooklm-network
 
-volumes:
-  chrome_profile:
+# Source code after dependencies
+
+COPY src/ ./src/volumes:
+
+```  chrome_profile:
+
     driver: local
 
+## 🚀 Production Ready
+
 networks:
-  notebooklm-network:
+
+### Resource Limits  notebooklm-network:
+
     driver: overlay
-```
 
-## 🛠️ **Development**
+```yaml```
 
-### **Development Docker Compose**
+deploy:
 
-```yaml
-version: '3.8'
+  resources:## 🛠️ **Development**
 
-services:
+    limits:
+
+      cpus: '2.0'### **Development Docker Compose**
+
+      memory: 2G
+
+    reservations:```yaml
+
+      cpus: '0.5'version: '3.8'
+
+      memory: 512M
+
+```services:
+
   notebooklm-mcp-dev:
-    build:
+
+### Security    build:
+
       context: .
-      dockerfile: Dockerfile.dev  # Development dockerfile
-    volumes:
-      - .:/app
+
+```yaml      dockerfile: Dockerfile.dev  # Development dockerfile
+
+security_opt:    volumes:
+
+  - no-new-privileges:true      - .:/app
+
       - chrome_profile:/app/chrome_profile
-    environment:
-      - NOTEBOOKLM_HEADLESS=false  # Show browser for debugging
-      - NOTEBOOKLM_DEBUG=true
+
+# Non-root user    environment:
+
+USER notebooklm      - NOTEBOOKLM_HEADLESS=false  # Show browser for debugging
+
+```      - NOTEBOOKLM_DEBUG=true
+
       - NOTEBOOKLM_NOTEBOOK_ID=${NOTEBOOKLM_NOTEBOOK_ID}
-    ports:
+
+### Monitoring    ports:
+
       - "8000:8000"  # For debugging
-    command: ["notebooklm-mcp", "server", "--debug"]
 
-volumes:
+```bash    command: ["notebooklm-mcp", "server", "--debug"]
+
+# Enable monitoring stack
+
+docker-compose --profile monitoring up -dvolumes:
+
   chrome_profile:
-```
 
-### **Multi-stage Build**
+# Access Grafana: http://localhost:3000```
 
-```dockerfile
+# Default: admin/admin
+
+```### **Multi-stage Build**
+
+
+
+---```dockerfile
+
 # Development stage
-FROM python:3.11-slim as development
+
+**🐳 Ready for production deployment with UV-powered Docker containers!**FROM python:3.11-slim as development
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt

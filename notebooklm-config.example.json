@@ -1,0 +1,20 @@
+{
+  "default_notebook_id": "your-notebook-id-here",
+  "headless": true,
+  "profile_dir": "/app/chrome_profile",
+  "timeout": 60,
+  "streaming_timeout": 30,
+  "debug": false,
+  "retry_attempts": 3,
+  "retry_delay": 2.0,
+  "persistent_session": true,
+  "wait_for_response": true,
+  "auto_scroll": false,
+  "performance_mode": false,
+  "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "auth": {
+    "method": "auto",
+    "timeout": 300,
+    "max_retries": 3
+  }
+}
