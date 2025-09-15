@@ -1,6 +1,6 @@
-# 🚀 NotebookLM FastMCP v2 Server
+# 🚀 NotebookLM MCP
 
-**Modern FastMCP v2 server for NotebookLM automation with UV Python manager**
+**Professional Automation Google NotebookLM automation**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastMCP v2](https://img.shields.io/badge/FastMCP-v2.0+-green.svg)](https://github.com/jlowin/fastmcp)
