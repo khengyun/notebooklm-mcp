@@ -52,8 +52,8 @@ async def test_proper_fastmcp_client():
                         "message": "Hello! Can you help me understand what documents are in this notebook?"
                     }
                 })
-                print(f"   ✅ Chat completed!")
-                print(f"   📤 Sent: Hello! Can you help me understand what documents are in this notebook?")
+                print("   ✅ Chat completed!")
+                print("   📤 Sent: Hello! Can you help me understand what documents are in this notebook?")
                 
                 # Extract response from result
                 if hasattr(chat_result, 'data') and 'response' in chat_result.data:
@@ -78,7 +78,6 @@ async def test_proper_fastmcp_client():
                 print(f"   ✅ Message sent: {send_result.data.get('status', 'unknown')}")
                 
                 # Wait a moment for processing
-                import time
                 await asyncio.sleep(2)
                 
                 # Get response
@@ -87,7 +86,7 @@ async def test_proper_fastmcp_client():
                         "timeout": 30
                     }
                 })
-                print(f"   ✅ Response received!")
+                print("   ✅ Response received!")
                 if hasattr(response_result, 'data') and 'response' in response_result.data:
                     response_text = response_result.data['response']
                     print(f"   📥 NotebookLM Response: {response_text[:200]}..." if len(response_text) > 200 else f"   📥 NotebookLM Response: {response_text}")

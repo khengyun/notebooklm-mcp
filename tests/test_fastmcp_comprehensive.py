@@ -3,10 +3,8 @@
 Comprehensive test suite for FastMCP v2 NotebookLM server
 """
 
-import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
 from notebooklm_mcp.server import NotebookLMFastMCP
@@ -78,11 +76,8 @@ class TestFastMCPServer:
     @pytest.mark.asyncio
     async def test_healthcheck_tool(self, fastmcp_server):
         """Test healthcheck tool"""
-        # Get tools from FastMCP app
-        tools = await fastmcp_server.app.get_tools()
-        healthcheck_tool = next(t for t in tools if t.name == "healthcheck")
-        
-        # Call the tool
+        # Call the tool directly
+        result = await fastmcp_server.app.call_tool("healthcheck", {})
         result = await fastmcp_server.app.call_tool("healthcheck", {})
         
         assert result is not None

@@ -5,7 +5,6 @@ Test client for connecting to FastMCP v2 HTTP server
 
 import asyncio
 import httpx
-import json
 from typing import Dict, Any, Optional
 
 class FastMCPHttpClient:

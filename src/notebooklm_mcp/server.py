@@ -5,7 +5,6 @@ Modern MCP server implementation using FastMCP v2 framework
 """
 
 import asyncio
-import os
 from typing import Any, Dict, Optional
 
 from fastmcp import FastMCP

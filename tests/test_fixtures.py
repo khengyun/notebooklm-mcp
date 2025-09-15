@@ -209,7 +209,7 @@ def authenticated_client(
 @pytest.fixture
 def mock_server() -> Mock:
     """Mock NotebookLM server for testing"""
-    server = AsyncMock(spec=NotebookLMServer)
+    server = AsyncMock(spec=NotebookLMFastMCP)
     server.config = default_config()
     server.client = None
 
@@ -233,9 +233,9 @@ def mock_server() -> Mock:
 @pytest.fixture
 def server_with_client(
     default_config: ServerConfig, mock_client: Mock
-) -> NotebookLMServer:
+) -> NotebookLMFastMCP:
     """NotebookLM server with mocked client attached"""
-    server = NotebookLMServer(default_config)
+    server = NotebookLMFastMCP(default_config)
     server.client = mock_client
     return server
 

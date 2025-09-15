@@ -24,13 +24,13 @@ from notebooklm_mcp.config import ServerConfig
 from notebooklm_mcp.server import NotebookLMFastMCP
 
 
-class TestNotebookLMServerInitialization:
+class TestNotebookLMFastMCPInitialization:
     """Test server initialization and configuration"""
 
     def test_server_initialization_default_config(self):
         """Test server initialization with default configuration"""
         config = ServerConfig()
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
 
         assert server.config == config
         assert server.client is None
@@ -43,7 +43,7 @@ class TestNotebookLMServerInitialization:
             default_notebook_id="test-notebook",
             headless=True,
         )
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
 
         assert server.config.server_name == "custom-notebooklm"
         assert server.config.default_notebook_id == "test-notebook"
@@ -52,19 +52,19 @@ class TestNotebookLMServerInitialization:
     def test_server_initialization_with_debug(self):
         """Test server initialization with debug mode"""
         config = ServerConfig(debug=True)
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
 
         assert server.config.debug is True
 
 
-class TestNotebookLMServerToolRegistration:
+class TestNotebookLMFastMCPToolRegistration:
     """Test MCP tool registration and discovery"""
 
     @pytest.fixture
     def server(self):
         """Server instance for testing"""
         config = ServerConfig()
-        return NotebookLMServer(config)
+        return NotebookLMFastMCP(config)
 
     def test_list_tools_returns_all_tools(self, server):
         """Test that list_tools returns all available tools"""
@@ -113,14 +113,14 @@ class TestNotebookLMServerToolRegistration:
             assert chat_tool in tool_names
 
 
-class TestNotebookLMServerClientManagement:
+class TestNotebookLMFastMCPClientManagement:
     """Test client lifecycle management"""
 
     @pytest.fixture
     def server_with_mock_client(self):
         """Server with mocked client"""
         config = ServerConfig()
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
         server.client = Mock(spec=NotebookLMClient)
         return server
 
@@ -128,7 +128,7 @@ class TestNotebookLMServerClientManagement:
     async def test_ensure_client_creates_new_client(self):
         """Test that ensure_client creates a new client when none exists"""
         config = ServerConfig()
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
 
         with patch("notebooklm_mcp.server.NotebookLMClient") as mock_client_class:
             mock_client = AsyncMock()
@@ -160,14 +160,14 @@ class TestNotebookLMServerClientManagement:
         assert server_with_mock_client.client is None
 
 
-class TestNotebookLMServerToolExecution:
+class TestNotebookLMFastMCPToolExecution:
     """Test tool execution and error handling"""
 
     @pytest.fixture
     def server_with_mock_client(self):
         """Server with mocked client for tool testing"""
         config = ServerConfig()
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
         server.client = AsyncMock(spec=NotebookLMClient)
         return server
 
@@ -250,14 +250,14 @@ class TestNotebookLMServerToolExecution:
         assert "set" in result["content"][0]["text"].lower()
 
 
-class TestNotebookLMServerErrorHandling:
+class TestNotebookLMFastMCPErrorHandling:
     """Test error handling in tool execution"""
 
     @pytest.fixture
     def server_with_failing_client(self):
         """Server with client that raises exceptions"""
         config = ServerConfig()
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
         server.client = AsyncMock(spec=NotebookLMClient)
         return server
 
@@ -312,7 +312,7 @@ class TestNotebookLMServerErrorHandling:
         assert "error" in result["content"][0]["text"].lower()
 
 
-class TestNotebookLMServerConfiguration:
+class TestNotebookLMFastMCPConfiguration:
     """Test server configuration and settings"""
 
     def test_server_config_propagation(self):
@@ -320,7 +320,7 @@ class TestNotebookLMServerConfiguration:
         config = ServerConfig(
             timeout=120, debug=True, default_notebook_id="config-test", headless=False
         )
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
 
         assert server.config.timeout == 120
         assert server.config.debug is True
@@ -330,20 +330,20 @@ class TestNotebookLMServerConfiguration:
     def test_server_name_configuration(self):
         """Test server name configuration"""
         config = ServerConfig(server_name="custom-mcp-server")
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
 
         assert server.config.server_name == "custom-mcp-server"
 
 
 @pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP library not available")
-class TestNotebookLMServerMCPIntegration:
+class TestNotebookLMFastMCPMCPIntegration:
     """Test MCP protocol integration (only if MCP is available)"""
 
     @pytest.mark.asyncio
     async def test_mcp_server_startup(self):
         """Test MCP server startup and shutdown"""
         config = ServerConfig()
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
 
         # Test that server can be created without errors
         assert server is not None
@@ -354,7 +354,7 @@ class TestNotebookLMServerMCPIntegration:
     def test_mcp_tool_format_compliance(self):
         """Test that tools comply with MCP format requirements"""
         config = ServerConfig()
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
         tools = server.list_tools()
 
         for tool in tools:
@@ -366,14 +366,14 @@ class TestNotebookLMServerMCPIntegration:
             assert isinstance(tool["description"], str)
 
 
-class TestNotebookLMServerPerformance:
+class TestNotebookLMFastMCPPerformance:
     """Test server performance and concurrency"""
 
     @pytest.mark.asyncio
     async def test_concurrent_tool_calls(self):
         """Test handling of concurrent tool calls"""
         config = ServerConfig()
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
         server.client = AsyncMock(spec=NotebookLMClient)
 
         # Simulate concurrent healthcheck calls
@@ -389,7 +389,7 @@ class TestNotebookLMServerPerformance:
     async def test_tool_call_timeout_handling(self):
         """Test handling of tool call timeouts"""
         config = ServerConfig(timeout=1)  # Very short timeout
-        server = NotebookLMServer(config)
+        server = NotebookLMFastMCP(config)
         server.client = AsyncMock(spec=NotebookLMClient)
 
         # Mock a slow operation

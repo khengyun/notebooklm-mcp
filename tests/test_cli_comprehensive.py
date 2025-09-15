@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from click.testing import CliRunner
 
-from notebooklm_mcp.cli import chat, config_show, main, server
+from notebooklm_mcp.cli import chat, config_show, main, server, test
 from notebooklm_mcp.client import NotebookLMClient
 
 
@@ -211,7 +211,7 @@ class TestCLITestCommand:
     def test_test_command_help(self):
         """Test test command help"""
         runner = CliRunner()
-        result = runner.invoke(test_connection, ["--help"])
+        result = runner.invoke(test, ["--help"])
 
         assert result.exit_code == 0
         assert "Test connection" in result.output
@@ -224,7 +224,7 @@ class TestCLITestCommand:
         mock_client.authenticate.return_value = True
 
         runner = CliRunner()
-        result = runner.invoke(test_connection, ["--notebook", "test-notebook"])
+        result = runner.invoke(test, ["--notebook", "test-notebook"])
 
         assert result.exit_code == 0
         mock_asyncio_run.assert_called_once()
@@ -236,7 +236,7 @@ class TestCLITestCommand:
         mock_client.authenticate.side_effect = Exception("Auth failed")
 
         runner = CliRunner()
-        runner.invoke(test_connection, ["--notebook", "test-notebook"])
+        runner.invoke(test, ["--notebook", "test-notebook"])
 
         # Should handle error gracefully
         mock_asyncio_run.assert_called_once()
