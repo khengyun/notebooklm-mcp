@@ -7,6 +7,7 @@ Enhanced with improved response parsing for cleaner AI responses.
 import asyncio
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 from loguru import logger
@@ -22,6 +23,7 @@ try:
 
     USE_UNDETECTED = True
 except ImportError:
+    uc = SimpleNamespace(Chrome=None, ChromeOptions=lambda: None)  # type: ignore[misc]
     USE_UNDETECTED = False
 
 from .config import ServerConfig

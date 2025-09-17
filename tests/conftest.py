@@ -1,14 +1,15 @@
-"""
-Test configuration and fixtures
-"""
+"""Test configuration and fixtures"""
 
 import asyncio
+import itertools
+import json
 import os
 
 # Disable napari plugins to avoid conflicts
 import sys
 
 import pytest
+from click.testing import CliRunner
 
 if "napari" in sys.modules:
     del sys.modules["napari"]
@@ -51,6 +52,26 @@ def event_loop():
 def temp_dir(tmp_path):
     """Provide temporary directory for tests"""
     return tmp_path
+
+
+@pytest.fixture
+def cli_runner():
+    """Provide a Click CLI runner for command tests"""
+    return CliRunner()
+
+
+@pytest.fixture
+def config_file_factory(tmp_path):
+    """Factory fixture to create temporary configuration files"""
+    counter = itertools.count()
+
+    def _create(content, *, as_json=True, suffix=".json"):
+        path = tmp_path / f"config_{next(counter)}{suffix}"
+        data = json.dumps(content) if as_json else str(content)
+        path.write_text(data)
+        return path
+
+    return _create
 
 
 @pytest.fixture

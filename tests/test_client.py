@@ -46,7 +46,10 @@ class TestNotebookLMClient:
         """Test browser startup"""
         client = NotebookLMClient(config)
 
-        with patch("notebooklm_mcp.client.uc.Chrome", return_value=mock_driver):
+        with (
+            patch("notebooklm_mcp.client.uc.Chrome", return_value=mock_driver),
+            patch("notebooklm_mcp.client.webdriver.Chrome", return_value=mock_driver),
+        ):
             await client.start()
 
         assert client.driver is not None
@@ -63,7 +66,7 @@ class TestNotebookLMClient:
             "https://notebooklm.google.com/notebook/test-notebook-id"
         )
 
-        with patch("selenium.webdriver.support.ui.WebDriverWait") as mock_wait:
+        with patch("notebooklm_mcp.client.WebDriverWait") as mock_wait:
             mock_wait.return_value.until.return_value = True
 
             result = await client.authenticate()
@@ -80,7 +83,7 @@ class TestNotebookLMClient:
         # Mock authentication failure (redirect to login)
         mock_driver.current_url = "https://accounts.google.com/signin"
 
-        with patch("selenium.webdriver.support.ui.WebDriverWait") as mock_wait:
+        with patch("notebooklm_mcp.client.WebDriverWait") as mock_wait:
             mock_wait.return_value.until.return_value = True
 
             result = await client.authenticate()
@@ -100,7 +103,7 @@ class TestNotebookLMClient:
         mock_input.clear = Mock()
         mock_input.send_keys = Mock()
 
-        with patch("selenium.webdriver.support.ui.WebDriverWait") as mock_wait:
+        with patch("notebooklm_mcp.client.WebDriverWait") as mock_wait:
             mock_wait.return_value.until.return_value = mock_input
 
             await client.send_message("Test message")
@@ -153,7 +156,7 @@ class TestNotebookLMClient:
         client = NotebookLMClient(config)
         client.driver = mock_driver
 
-        with patch("selenium.webdriver.support.ui.WebDriverWait") as mock_wait:
+        with patch("notebooklm_mcp.client.WebDriverWait") as mock_wait:
             mock_wait.return_value.until.return_value = True
 
             await client.navigate_to_notebook("new-notebook-id")
