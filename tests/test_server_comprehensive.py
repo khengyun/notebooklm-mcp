@@ -36,7 +36,9 @@ async def test_ensure_client_initialises_notebook_client(
 
 
 @pytest.mark.asyncio
-async def test_start_invokes_fastmcp_run_async(fastmcp_server: NotebookLMFastMCP) -> None:
+async def test_start_invokes_fastmcp_run_async(
+    fastmcp_server: NotebookLMFastMCP,
+) -> None:
     """Starting the server should call the underlying FastMCP run method."""
 
     fastmcp_server.client = AsyncMock()
@@ -65,7 +67,9 @@ async def test_stop_closes_existing_client(fastmcp_server: NotebookLMFastMCP) ->
 def test_create_fastmcp_server_uses_config_loader(server_config: ServerConfig) -> None:
     """Factory helper should delegate to :func:`load_config` and construct the server."""
 
-    with patch("notebooklm_mcp.config.load_config", return_value=server_config) as mock_load:
+    with patch(
+        "notebooklm_mcp.config.load_config", return_value=server_config
+    ) as mock_load:
         server = create_fastmcp_server("config.json")
 
     mock_load.assert_called_once_with("config.json")

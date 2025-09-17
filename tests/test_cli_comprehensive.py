@@ -86,7 +86,9 @@ def test_server_command_initialises_fastmcp(cli_runner, sample_config, monkeypat
     monkeypatch.setattr("os.chdir", lambda path: None)
 
     with (
-        patch("notebooklm_mcp.cli.NotebookLMFastMCP", return_value=fake_server) as mock_server,
+        patch(
+            "notebooklm_mcp.cli.NotebookLMFastMCP", return_value=fake_server
+        ) as mock_server,
         patch("notebooklm_mcp.cli.asyncio.run") as mock_run,
     ):
         mock_run.return_value = None
