@@ -7,19 +7,12 @@ services:
     container_name: notebooklm-mcp-server
     restart: unless-stopped
 
-    environment:
-      # UV Python environment
-      - UV_PYTHON=python3.10
-      
-      # Application mode
-      - NOTEBOOKLM_CONFIG_FILE=/app/notebooklm-config.json
-
     volumes:
       # REQUIRED: Mount config file
       - ./notebooklm-config.json:/app/notebooklm-config.json:ro
 
-      # Persist Chrome profile for session management
-      - chrome_profile:/app/chrome_profile
+      # Persist Chrome profile created by `notebooklm-mcp init`
+      - ./chrome_profile_notebooklm:/app/chrome_profile_notebooklm
 
       # Optional: Mount custom scripts
       - ./scripts:/app/scripts:ro
@@ -85,8 +78,6 @@ services:
       - monitoring
 
 volumes:
-  chrome_profile:
-    driver: local
   prometheus_data:
     driver: local
   grafana_data:
