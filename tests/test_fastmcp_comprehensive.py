@@ -6,6 +6,7 @@ Comprehensive test suite for FastMCP v2 NotebookLM server
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from fastmcp.client.transports import StreamableHttpTransport
 
 from notebooklm_mcp.config import AuthConfig, ServerConfig
@@ -33,12 +34,12 @@ def mock_client():
     client.send_message = AsyncMock()
     client.get_response = AsyncMock(return_value="Test response from NotebookLM")
     client.navigate_to_notebook = AsyncMock()
-    client.stop = AsyncMock()
+    client.close = AsyncMock()
     client._is_authenticated = True
     return client
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def fastmcp_server(mock_config, mock_client):
     """Create FastMCP server with mocked client"""
     server = NotebookLMFastMCP(mock_config)
@@ -73,6 +74,14 @@ class TestFastMCPServer:
 
             assert server.client == mock_client
             mock_client.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_server_stop_closes_client(self, fastmcp_server):
+        """Test server stop uses client.close"""
+
+        await fastmcp_server.stop()
+
+        fastmcp_server.client.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_healthcheck_tool(self, fastmcp_server):

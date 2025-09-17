@@ -271,7 +271,7 @@ class NotebookLMFastMCP:
         """Gracefully stop the server"""
         try:
             if self.client:
-                await self.client.stop()
+                await self.client.close()
                 logger.info("✅ FastMCP server stopped gracefully")
         except Exception as e:
             logger.error(f"Error during server shutdown: {e}")
