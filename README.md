@@ -250,7 +250,20 @@ notebooklm-mcp --config notebooklm-config.json test --notebook YOUR_NOTEBOOK_ID
 ### Quick Start
 
 ```bash
-docker run -e NOTEBOOKLM_NOTEBOOK_ID="YOUR_ID" notebooklm-mcp
+# 1. Generate config + Chrome profile with guided login
+uv run notebooklm-mcp init https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID
+# If you installed via pip, run: notebooklm-mcp init https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID
+
+# 2. Build the container image
+docker build -t notebooklm-mcp .
+
+# 3. Run the server with your mounted config/profile
+docker run -d \
+  --name notebooklm-mcp \
+  --restart unless-stopped \
+  -v $(pwd)/notebooklm-config.json:/app/notebooklm-config.json:ro \
+  -v $(pwd)/chrome_profile_notebooklm:/app/chrome_profile_notebooklm \
+  notebooklm-mcp:latest
 ```
 
 ### With Compose
@@ -260,14 +273,17 @@ version: '3.8'
 services:
   notebooklm-mcp:
     image: notebooklm-mcp:latest
-    ports:
-      - "8001:8001"
-    environment:
-      - NOTEBOOKLM_NOTEBOOK_ID=your-notebook-id
-      - TRANSPORT=http
+    build: .
+    restart: unless-stopped
     volumes:
-      - ./chrome_profile:/app/chrome_profile
+      - ./notebooklm-config.json:/app/notebooklm-config.json:ro
+      - ./chrome_profile_notebooklm:/app/chrome_profile_notebooklm
 ```
+
+Start the stack with `docker compose up -d` after running the `init` command once so
+that `notebooklm-config.json` and `chrome_profile_notebooklm/` exist. The server
+runs in STDIO mode by default; uncomment the HTTP/SSE ports in
+`docker-compose.yml` if your client requires them.
 
 ## ⚙️ Configuration
 
