@@ -274,8 +274,7 @@ def test_client_send_message_sync_errors(monkeypatch):
         client._send_message_sync("hi")
 
 
-@pytest.mark.asyncio
-async def test_client_send_message_async(monkeypatch):
+def test_client_send_message_async(monkeypatch):
     client = NotebookLMClient(ServerConfig())
     client.driver = object()
     client._is_authenticated = True
@@ -286,17 +285,19 @@ async def test_client_send_message_async(monkeypatch):
         "_send_message_sync",
         MethodType(lambda self, message: recorded.setdefault("msg", message), client),
     )
-    loop = asyncio.get_running_loop()
-    monkeypatch.setattr(
-        "notebooklm_mcp.client.asyncio.get_event_loop", lambda: ImmediateLoop(loop)
-    )
 
-    await client.send_message("payload")
+    async def run_test():
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(
+            "notebooklm_mcp.client.asyncio.get_event_loop", lambda: ImmediateLoop(loop)
+        )
+        await client.send_message("payload")
+
+    asyncio.run(run_test())
     assert recorded["msg"] == "payload"
 
 
-@pytest.mark.asyncio
-async def test_client_get_response_quick(monkeypatch):
+def test_client_get_response_quick(monkeypatch):
     client = NotebookLMClient(ServerConfig())
     client.driver = object()
     monkeypatch.setattr(
@@ -304,12 +305,15 @@ async def test_client_get_response_quick(monkeypatch):
         "_get_current_response",
         MethodType(lambda self: "response", client),
     )
-    loop = asyncio.get_running_loop()
-    monkeypatch.setattr(
-        "notebooklm_mcp.client.asyncio.get_event_loop", lambda: ImmediateLoop(loop)
-    )
 
-    result = await client.get_response(wait_for_completion=False)
+    async def run_test():
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(
+            "notebooklm_mcp.client.asyncio.get_event_loop", lambda: ImmediateLoop(loop)
+        )
+        return await client.get_response(wait_for_completion=False)
+
+    result = asyncio.run(run_test())
     assert result == "response"
 
 
@@ -325,8 +329,7 @@ def test_check_streaming_indicators_detects_visible():
     assert client._check_streaming_indicators() is False
 
 
-@pytest.mark.asyncio
-async def test_client_navigation_and_close(monkeypatch):
+def test_client_navigation_and_close(monkeypatch):
     client = NotebookLMClient(ServerConfig())
     driver = DummyDriver()
     client.driver = driver
@@ -336,21 +339,23 @@ async def test_client_navigation_and_close(monkeypatch):
         lambda driver, timeout: SimpleNamespace(until=lambda condition: True),
     )
 
-    loop = asyncio.get_running_loop()
-    monkeypatch.setattr(
-        "notebooklm_mcp.client.asyncio.get_event_loop", lambda: ImmediateLoop(loop)
-    )
-
-    url = await client.navigate_to_notebook("xyz")
-    assert url.endswith("/xyz")
-
     called = {}
 
     def fake_quit():
         called["quit"] = True
 
     driver.quit = fake_quit
-    await client.close()
+
+    async def run_test():
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(
+            "notebooklm_mcp.client.asyncio.get_event_loop", lambda: ImmediateLoop(loop)
+        )
+        url = await client.navigate_to_notebook("xyz")
+        assert url.endswith("/xyz")
+        await client.close()
+
+    asyncio.run(run_test())
     assert called["quit"] is True
     assert client.driver is None
 
@@ -486,63 +491,61 @@ def server(monkeypatch):
     return instance, dummy
 
 
-@pytest.mark.asyncio
-async def test_server_healthcheck(server):
+def test_server_healthcheck(server):
     server_instance, dummy = server
-    result = await server_instance.app.tools["healthcheck"]()
+    result = asyncio.run(server_instance.app.tools["healthcheck"]())
     assert result["status"] == "healthy"
     dummy._is_authenticated = False
-    result = await server_instance.app.tools["healthcheck"]()
+    result = asyncio.run(server_instance.app.tools["healthcheck"]())
     assert result["status"] == "needs_auth"
 
 
-@pytest.mark.asyncio
-async def test_server_chat_flow(server):
+def test_server_chat_flow(server):
     server_instance, dummy = server
     request = server_module.SendMessageRequest(message="hi", wait_for_response=True)
-    response = await server_instance.app.tools["send_chat_message"](request)
+    response = asyncio.run(server_instance.app.tools["send_chat_message"](request))
     assert response["status"] == "completed"
     assert dummy.sent_messages == ["hi"]
 
     chat_request = server_module.ChatRequest(message="hey", notebook_id="new")
-    response = await server_instance.app.tools["chat_with_notebook"](chat_request)
+    response = asyncio.run(
+        server_instance.app.tools["chat_with_notebook"](chat_request)
+    )
     assert response["notebook_id"] == "new"
     assert dummy.navigated_to == ["new"]
 
     nav_request = server_module.NavigateRequest(notebook_id="abc")
-    result = await server_instance.app.tools["navigate_to_notebook"](nav_request)
+    result = asyncio.run(server_instance.app.tools["navigate_to_notebook"](nav_request))
     assert result["status"] == "success"
 
 
-@pytest.mark.asyncio
-async def test_server_default_notebook_tools(server):
+def test_server_default_notebook_tools(server):
     server_instance, _ = server
-    result = await server_instance.app.tools["get_default_notebook"]()
+    result = asyncio.run(server_instance.app.tools["get_default_notebook"]())
     assert result["notebook_id"] == "abc"
 
     request = server_module.SetNotebookRequest(notebook_id="xyz")
-    result = await server_instance.app.tools["set_default_notebook"](request)
+    result = asyncio.run(server_instance.app.tools["set_default_notebook"](request))
     assert result["new_notebook_id"] == "xyz"
     assert server_instance.config.default_notebook_id == "xyz"
 
 
-@pytest.mark.asyncio
-async def test_server_start_and_stop(monkeypatch):
+def test_server_start_and_stop(monkeypatch):
     monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
     instance = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    await instance.start(transport="http", host="0.0.0.0", port=9000)
+
+    asyncio.run(instance.start(transport="http", host="0.0.0.0", port=9000))
     assert instance.app.run_calls[-1] == {
         "transport": "http",
         "host": "0.0.0.0",
         "port": 9000,
     }
 
-    await instance.stop()
+    asyncio.run(instance.stop())
     assert instance.client.closed is True
 
 
-@pytest.mark.asyncio
-async def test_server_start_error(monkeypatch):
+def test_server_start_error(monkeypatch):
     class ExplodingClient(DummyClient):
         async def start(self):
             raise RuntimeError("boom")
@@ -551,11 +554,10 @@ async def test_server_start_error(monkeypatch):
     instance = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
     with pytest.raises(NotebookLMError, match="Server startup failed"):
-        await instance.start()
+        asyncio.run(instance.start())
 
 
-@pytest.mark.asyncio
-async def test_server_tool_error_paths(monkeypatch, server):
+def test_server_tool_error_paths(monkeypatch, server):
     server_instance, _ = server
 
     class FailingClient(DummyClient):
@@ -565,8 +567,10 @@ async def test_server_tool_error_paths(monkeypatch, server):
     server_instance.client = FailingClient(server_instance.config)
 
     with pytest.raises(NotebookLMError):
-        await server_instance.app.tools["send_chat_message"](
-            server_module.SendMessageRequest(message="oops")
+        asyncio.run(
+            server_instance.app.tools["send_chat_message"](
+                server_module.SendMessageRequest(message="oops")
+            )
         )
 
 
@@ -641,8 +645,7 @@ def test_metrics_collector_with_prometheus(monkeypatch):
     assert any(event == ("set", 3) for event in collector.active_sessions_gauge.events)
 
 
-@pytest.mark.asyncio
-async def test_request_timer_success(monkeypatch):
+def test_request_timer_success(monkeypatch):
     calls = []
 
     class DummyCollector:
@@ -651,14 +654,15 @@ async def test_request_timer_success(monkeypatch):
 
     monkeypatch.setattr(monitoring, "metrics_collector", DummyCollector())
 
-    async with monitoring.request_timer():
-        await asyncio.sleep(0)
+    async def run_test():
+        async with monitoring.request_timer():
+            await asyncio.sleep(0)
 
+    asyncio.run(run_test())
     assert calls and calls[0][0] is True
 
 
-@pytest.mark.asyncio
-async def test_request_timer_failure(monkeypatch):
+def test_request_timer_failure(monkeypatch):
     calls = []
 
     class DummyCollector:
@@ -667,15 +671,17 @@ async def test_request_timer_failure(monkeypatch):
 
     monkeypatch.setattr(monitoring, "metrics_collector", DummyCollector())
 
-    with pytest.raises(RuntimeError):
+    async def run_test():
         async with monitoring.request_timer():
             raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(run_test())
 
     assert calls and calls[0][0] is False
 
 
-@pytest.mark.asyncio
-async def test_health_checker_reports_status(monkeypatch):
+def test_health_checker_reports_status(monkeypatch):
     dummy_psutil = DummyPsutil(memory_percent=40.0, cpu_percent=30.0)
     monkeypatch.setattr(monitoring, "psutil", dummy_psutil)
 
@@ -687,24 +693,29 @@ async def test_health_checker_reports_status(monkeypatch):
     )
 
     checker = monitoring.HealthChecker(client)
-    monitoring.metrics_collector.start_time = asyncio.get_event_loop().time()
 
-    result = await checker.check_health()
+    async def run_test():
+        monitoring.metrics_collector.start_time = asyncio.get_running_loop().time()
+        return await checker.check_health()
+
+    result = asyncio.run(run_test())
     assert result.healthy is True
     assert result.browser_status == "healthy"
     assert result.authentication_status == "authenticated"
 
 
-@pytest.mark.asyncio
-async def test_health_checker_not_started(monkeypatch):
+def test_health_checker_not_started(monkeypatch):
     dummy_psutil = DummyPsutil(memory_percent=20.0, cpu_percent=10.0)
     monkeypatch.setattr(monitoring, "psutil", dummy_psutil)
 
     client = SimpleNamespace(driver=None, _is_authenticated=False)
     checker = monitoring.HealthChecker(client)
-    monitoring.metrics_collector.start_time = asyncio.get_event_loop().time()
 
-    result = await checker.check_health()
+    async def run_test():
+        monitoring.metrics_collector.start_time = asyncio.get_running_loop().time()
+        return await checker.check_health()
+
+    result = asyncio.run(run_test())
     assert result.browser_status == "not_started"
     assert result.authentication_status == "not_authenticated"
 
@@ -739,8 +750,7 @@ def test_setup_monitoring_without_prometheus(monkeypatch):
     assert any("metrics will not be exported" in msg for msg in messages)
 
 
-@pytest.mark.asyncio
-async def test_periodic_health_check_handles_cancel(monkeypatch):
+def test_periodic_health_check_handles_cancel(monkeypatch):
     calls = {"health": 0, "metrics": 0}
 
     class DummyChecker:
@@ -759,14 +769,13 @@ async def test_periodic_health_check_handles_cancel(monkeypatch):
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
     with pytest.raises(asyncio.CancelledError):
-        await monitoring.periodic_health_check(interval=0)
+        asyncio.run(monitoring.periodic_health_check(interval=0))
 
     assert calls["health"] == 1
     assert calls["metrics"] == 1
 
 
-@pytest.mark.asyncio
-async def test_periodic_health_check_logs_error(monkeypatch):
+def test_periodic_health_check_logs_error(monkeypatch):
     class BrokenChecker:
         async def check_health(self):
             raise RuntimeError("bad")
@@ -788,7 +797,7 @@ async def test_periodic_health_check_logs_error(monkeypatch):
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await monitoring.periodic_health_check(interval=0)
+        asyncio.run(monitoring.periodic_health_check(interval=0))
 
     assert any("Periodic health check failed" in message for message in messages)
 
@@ -832,8 +841,7 @@ def test_setup_logging_info_level(monkeypatch, tmp_path):
     assert first_add[2]["level"] == "INFO"
 
 
-@pytest.mark.asyncio
-async def test_health_checker_handles_exception(monkeypatch):
+def test_health_checker_handles_exception(monkeypatch):
     class BrokenPsutil:
         def virtual_memory(self):
             raise RuntimeError("fail")
@@ -843,6 +851,6 @@ async def test_health_checker_handles_exception(monkeypatch):
 
     monkeypatch.setattr(monitoring, "psutil", BrokenPsutil())
     checker = monitoring.HealthChecker()
-    result = await checker.check_health()
+    result = asyncio.run(checker.check_health())
     assert result.healthy is False
     assert result.browser_status == "error"
