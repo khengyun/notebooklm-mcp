@@ -75,7 +75,7 @@ def test_server_command_invokes_start(monkeypatch, tmp_path):
 
 
 def test_chat_command_sends_message(monkeypatch, tmp_path):
-    config = setup_cli(monkeypatch, tmp_path)
+    setup_cli(monkeypatch, tmp_path)
     config_path = make_config_file(tmp_path)
 
     created = {}

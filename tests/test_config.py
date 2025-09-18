@@ -1,7 +1,4 @@
 import json
-import os
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -49,7 +46,10 @@ def test_server_config_round_trip(tmp_path):
     [
         ({"timeout": 0}, "Timeout must be positive"),
         ({"streaming_timeout": 0}, "Streaming timeout must be positive"),
-        ({"response_stability_checks": 0}, "Response stability checks must be positive"),
+        (
+            {"response_stability_checks": 0},
+            "Response stability checks must be positive",
+        ),
         ({"retry_attempts": -1}, "Retry attempts cannot be negative"),
     ],
 )
@@ -68,7 +68,9 @@ def test_server_config_validate_profile_checks(tmp_path):
         auth=AuthConfig(profile_dir=str(tmp_path / "missing" / "profile"))
     )
 
-    with pytest.raises(ConfigurationError, match="Profile directory parent does not exist"):
+    with pytest.raises(
+        ConfigurationError, match="Profile directory parent does not exist"
+    ):
         config.validate()
 
     target_dir = tmp_path / "profiles" / "target"
