@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import notebooklm_mcp.server as server_module
 from notebooklm_mcp.config import ServerConfig
 from notebooklm_mcp.exceptions import NotebookLMError
 from notebooklm_mcp.server import (
     ChatRequest,
     GetResponseRequest,
+    NavigateRequest,
     NotebookLMFastMCP,
     SendMessageRequest,
     SetNotebookRequest,
     create_fastmcp_server,
+    main,
 )
 
 
@@ -98,6 +102,25 @@ async def test_send_chat_message_tool(
 
 
 @pytest.mark.asyncio
+async def test_send_chat_message_without_wait(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = fastmcp_server.app._tool_manager._tools["send_chat_message"].fn
+
+    client = AsyncMock()
+    fastmcp_server.client = client
+    fastmcp_server.client.get_response = AsyncMock()  # type: ignore[assignment]
+    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
+
+    result = await tool(SendMessageRequest(message="hi", wait_for_response=False))
+
+    fastmcp_server._ensure_client.assert_awaited_once()
+    client.send_message.assert_awaited_once_with("hi")
+    client.get_response.assert_not_called()
+    assert result == {"status": "sent", "message": "hi"}
+
+
+@pytest.mark.asyncio
 async def test_send_chat_message_failure_wraps_error(
     fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -113,6 +136,41 @@ async def test_send_chat_message_failure_wraps_error(
 
 
 @pytest.mark.asyncio
+async def test_get_chat_response(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = fastmcp_server.app._tool_manager._tools["get_chat_response"].fn
+
+    client = AsyncMock()
+    client.get_response.return_value = "latest"
+    fastmcp_server.client = client
+    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
+
+    result = await tool(GetResponseRequest(timeout=12))
+
+    fastmcp_server._ensure_client.assert_awaited_once()
+    client.get_response.assert_awaited_once()
+    assert result["response"] == "latest"
+
+
+@pytest.mark.asyncio
+async def test_get_chat_response_failure(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = fastmcp_server.app._tool_manager._tools["get_chat_response"].fn
+
+    async def fail() -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(fastmcp_server, "_ensure_client", fail)
+
+    with pytest.raises(NotebookLMError) as exc:
+        await tool(GetResponseRequest())
+
+    assert "Failed to get response" in str(exc.value)
+
+
+@pytest.mark.asyncio
 async def test_get_quick_response(
     fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -122,6 +180,22 @@ async def test_get_quick_response(
 
     result = await tool()
     assert result["response"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_get_quick_response_failure(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = fastmcp_server.app._tool_manager._tools["get_quick_response"].fn
+    client = AsyncMock()
+    client.get_response.side_effect = RuntimeError("fail")
+    fastmcp_server.client = client
+    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
+
+    with pytest.raises(NotebookLMError) as exc:
+        await tool()
+
+    assert "Failed to get quick response" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -155,6 +229,38 @@ async def test_navigate_to_notebook_tool(
 
 
 @pytest.mark.asyncio
+async def test_chat_with_notebook_failure(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = fastmcp_server.app._tool_manager._tools["chat_with_notebook"].fn
+    client = AsyncMock()
+    client.send_message.side_effect = RuntimeError("fail")
+    fastmcp_server.client = client
+    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
+
+    with pytest.raises(NotebookLMError) as exc:
+        await tool(ChatRequest(message="hi", notebook_id="other"))
+
+    assert "Chat interaction failed" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_navigate_to_notebook_failure(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = fastmcp_server.app._tool_manager._tools["navigate_to_notebook"].fn
+    client = AsyncMock()
+    client.navigate_to_notebook.side_effect = RuntimeError("fail")
+    fastmcp_server.client = client
+    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
+
+    with pytest.raises(NotebookLMError) as exc:
+        await tool(NavigateRequest(notebook_id="target"))
+
+    assert "Failed to navigate" in str(exc.value)
+
+
+@pytest.mark.asyncio
 async def test_set_default_notebook_updates_config(
     fastmcp_server: NotebookLMFastMCP,
 ) -> None:
@@ -163,6 +269,26 @@ async def test_set_default_notebook_updates_config(
     result = await tool(SetNotebookRequest(notebook_id="new"))
     assert fastmcp_server.config.default_notebook_id == "new"
     assert result["new_notebook_id"] == "new"
+
+
+@pytest.mark.asyncio
+async def test_set_default_notebook_failure(
+    fastmcp_server: NotebookLMFastMCP,
+) -> None:
+    tool = fastmcp_server.app._tool_manager._tools["set_default_notebook"].fn
+
+    class ImmutableConfig(ServerConfig):
+        def __setattr__(self, name, value):
+            if name == "default_notebook_id" and name in self.__dict__:
+                raise RuntimeError("locked")
+            super().__setattr__(name, value)
+
+    fastmcp_server.config = ImmutableConfig(default_notebook_id="existing")
+
+    with pytest.raises(NotebookLMError) as exc:
+        await tool(SetNotebookRequest(notebook_id="new"))
+
+    assert "Failed to set default notebook" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -303,3 +429,59 @@ def test_create_fastmcp_server(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_load.assert_called_once_with("/tmp/config.json")
     assert isinstance(server, NotebookLMFastMCP)
     assert server.config is config
+
+
+@pytest.mark.asyncio
+async def test_main_runs_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_server = SimpleNamespace(start=AsyncMock())
+
+    monkeypatch.setattr(sys, "argv", ["server", "/tmp/config.json"])
+    monkeypatch.setattr(
+        server_module, "create_fastmcp_server", lambda path: fake_server
+    )
+
+    await main()
+
+    fake_server.start.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_main_requires_config(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["server"])
+
+    with pytest.raises(SystemExit) as exc:
+        await main()
+
+    assert exc.value.code == 1
+    assert "Usage" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_main_handles_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_server = SimpleNamespace(start=AsyncMock(side_effect=KeyboardInterrupt))
+
+    monkeypatch.setattr(sys, "argv", ["server", "cfg.json"])
+    monkeypatch.setattr(
+        server_module, "create_fastmcp_server", lambda path: fake_server
+    )
+
+    await main()
+
+    fake_server.start.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_main_handles_server_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_server = SimpleNamespace(start=AsyncMock(side_effect=RuntimeError("boom")))
+
+    monkeypatch.setattr(sys, "argv", ["server", "cfg.json"])
+    monkeypatch.setattr(
+        server_module, "create_fastmcp_server", lambda path: fake_server
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        await main()
+
+    assert exc.value.code == 1
