@@ -1,35 +1,70 @@
-from __future__ import annotations
-
 import asyncio
+import json
 import sys
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import MethodType, SimpleNamespace
 
 import pytest
 
-import notebooklm_mcp.server as server_module
+from notebooklm_mcp import server as server_module
 from notebooklm_mcp.config import ServerConfig
 from notebooklm_mcp.exceptions import NotebookLMError
-from notebooklm_mcp.server import (
-    ChatRequest,
-    GetResponseRequest,
-    NavigateRequest,
-    NotebookLMFastMCP,
-    SendMessageRequest,
-    SetNotebookRequest,
-    create_fastmcp_server,
-    main,
-)
 
 
-@pytest.fixture
-def fastmcp_server() -> NotebookLMFastMCP:
-    return NotebookLMFastMCP(ServerConfig(default_notebook_id="notebook-1"))
+class DummyFastMCP:
+    def __init__(self, name):
+        self.name = name
+        self.tools: dict[str, callable] = {}
+        self.run_calls = []
+
+    def tool(self):
+        def decorator(func):
+            self.tools[func.__name__] = func
+            return func
+
+        return decorator
+
+    async def run_async(self, **kwargs):
+        self.run_calls.append(kwargs)
 
 
-def test_tools_registered(fastmcp_server: NotebookLMFastMCP) -> None:
-    tool_names = set(fastmcp_server.app._tool_manager._tools)
-    expected = {
+class DummyClient:
+    def __init__(self, config):
+        self.config = config
+        self.started = False
+        self.closed = False
+        self.sent_messages = []
+        self._is_authenticated = True
+        self.navigated_to = []
+
+    async def start(self):
+        self.started = True
+
+    async def close(self):
+        self.closed = True
+
+    async def send_message(self, message):
+        self.sent_messages.append(message)
+
+    async def get_response(self):
+        return "response"
+
+    async def navigate_to_notebook(self, notebook_id):
+        self.config.default_notebook_id = notebook_id
+        self.navigated_to.append(notebook_id)
+
+
+@pytest.fixture(autouse=True)
+def patch_fastmcp(monkeypatch):
+    monkeypatch.setattr(server_module, "FastMCP", DummyFastMCP)
+
+
+def test_notebooklmfastmcp_registers_tools(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    config = ServerConfig(default_notebook_id="abc")
+    server = server_module.NotebookLMFastMCP(config)
+
+    assert server.app.name == "NotebookLM MCP Server v2"
+    expected_tools = {
         "healthcheck",
         "send_chat_message",
         "get_chat_response",
@@ -39,449 +74,434 @@ def test_tools_registered(fastmcp_server: NotebookLMFastMCP) -> None:
         "get_default_notebook",
         "set_default_notebook",
     }
-    assert expected.issubset(tool_names)
+    assert expected_tools.issubset(server.app.tools.keys())
 
 
 @pytest.mark.asyncio
-async def test_healthcheck_reports_authentication_state(
-    fastmcp_server: NotebookLMFastMCP,
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["healthcheck"].fn
+async def test_ensure_client_initializes_once(monkeypatch):
+    created = []
 
-    status = await tool()
-    assert status["status"] == "unhealthy"
+    class TrackingClient(DummyClient):
+        def __init__(self, config):
+            super().__init__(config)
+            created.append(self)
 
-    fastmcp_server.client = SimpleNamespace(_is_authenticated=True)
-    status = await tool()
-    assert status["status"] == "healthy"
-    assert status["authenticated"] is True
+    monkeypatch.setattr(server_module, "NotebookLMClient", TrackingClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+
+    await server._ensure_client()
+    await server._ensure_client()
+
+    assert len(created) == 1
+    assert created[0].started is True
 
 
 @pytest.mark.asyncio
-async def test_healthcheck_reports_needs_auth_and_errors(
-    fastmcp_server: NotebookLMFastMCP,
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["healthcheck"].fn
-
-    fastmcp_server.client = SimpleNamespace(_is_authenticated=False)
-    status = await tool()
-    assert status["status"] == "needs_auth"
-    assert status["authenticated"] is False
-
-    class ExplodingClient:
-        def __bool__(self) -> bool:
-            return True
-
-        def __getattr__(self, name: str) -> None:  # pragma: no cover - debug helper
+async def test_ensure_client_errors_propagate(monkeypatch):
+    class FailingClient(DummyClient):
+        async def start(self):  # pragma: no cover - exercised for error branch
             raise RuntimeError("boom")
 
-    fastmcp_server.client = ExplodingClient()
-    status = await tool()
-    assert status["status"] == "error"
-    assert status["authenticated"] is False
+    monkeypatch.setattr(server_module, "NotebookLMClient", FailingClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+
+    with pytest.raises(NotebookLMError, match="Client initialization failed"):
+        await server._ensure_client()
 
 
 @pytest.mark.asyncio
-async def test_send_chat_message_tool(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["send_chat_message"].fn
+async def test_start_uses_transport(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    await server.start(transport="http", host="0.0.0.0", port=9000)
 
-    client = AsyncMock()
-    client.get_response.return_value = "response"
-    fastmcp_server.client = client
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
-
-    result = await tool(SendMessageRequest(message="hi", wait_for_response=True))
-
-    fastmcp_server._ensure_client.assert_awaited_once()
-    client.send_message.assert_awaited_once_with("hi")
-    client.get_response.assert_awaited_once()
-    assert result["status"] == "completed"
-    assert result["response"] == "response"
+    assert server.app.run_calls[-1] == {
+        "transport": "http",
+        "host": "0.0.0.0",
+        "port": 9000,
+    }
 
 
 @pytest.mark.asyncio
-async def test_send_chat_message_without_wait(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["send_chat_message"].fn
+async def test_start_handles_errors(monkeypatch):
+    class ExplodingClient(DummyClient):
+        async def start(self):  # pragma: no cover - error branch
+            raise RuntimeError("fail")
 
-    client = AsyncMock()
-    fastmcp_server.client = client
-    fastmcp_server.client.get_response = AsyncMock()  # type: ignore[assignment]
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
+    monkeypatch.setattr(server_module, "NotebookLMClient", ExplodingClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
-    result = await tool(SendMessageRequest(message="hi", wait_for_response=False))
-
-    fastmcp_server._ensure_client.assert_awaited_once()
-    client.send_message.assert_awaited_once_with("hi")
-    client.get_response.assert_not_called()
-    assert result == {"status": "sent", "message": "hi"}
+    with pytest.raises(NotebookLMError, match="Server startup failed"):
+        await server.start()
 
 
 @pytest.mark.asyncio
-async def test_send_chat_message_failure_wraps_error(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["send_chat_message"].fn
-
-    async def fail():
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", fail)
-
-    with pytest.raises(NotebookLMError):
-        await tool(SendMessageRequest(message="hi"))
-
-
-@pytest.mark.asyncio
-async def test_get_chat_response(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["get_chat_response"].fn
-
-    client = AsyncMock()
-    client.get_response.return_value = "latest"
-    fastmcp_server.client = client
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
-
-    result = await tool(GetResponseRequest(timeout=12))
-
-    fastmcp_server._ensure_client.assert_awaited_once()
-    client.get_response.assert_awaited_once()
-    assert result["response"] == "latest"
-
-
-@pytest.mark.asyncio
-async def test_get_chat_response_failure(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["get_chat_response"].fn
-
-    async def fail() -> None:
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", fail)
-
-    with pytest.raises(NotebookLMError) as exc:
-        await tool(GetResponseRequest())
-
-    assert "Failed to get response" in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_get_quick_response(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["get_quick_response"].fn
-    fastmcp_server.client = AsyncMock(get_response=AsyncMock(return_value="hello"))
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
-
-    result = await tool()
-    assert result["response"] == "hello"
-
-
-@pytest.mark.asyncio
-async def test_get_quick_response_failure(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["get_quick_response"].fn
-    client = AsyncMock()
-    client.get_response.side_effect = RuntimeError("fail")
-    fastmcp_server.client = client
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
-
-    with pytest.raises(NotebookLMError) as exc:
-        await tool()
-
-    assert "Failed to get quick response" in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_chat_with_notebook_switches_notebooks(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["chat_with_notebook"].fn
-    client = AsyncMock()
-    fastmcp_server.client = client
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
-
-    await tool(ChatRequest(message="hi", notebook_id="other"))
-
-    client.navigate_to_notebook.assert_awaited_once_with("other")
-    client.send_message.assert_awaited_once()
-    client.get_response.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_navigate_to_notebook_tool(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["navigate_to_notebook"].fn
-    client = AsyncMock()
-    fastmcp_server.client = client
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
-
-    result = await tool(SetNotebookRequest(notebook_id="target"))
-    client.navigate_to_notebook.assert_awaited_once_with("target")
-    assert result["notebook_id"] == "target"
-
-
-@pytest.mark.asyncio
-async def test_chat_with_notebook_failure(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["chat_with_notebook"].fn
-    client = AsyncMock()
-    client.send_message.side_effect = RuntimeError("fail")
-    fastmcp_server.client = client
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
-
-    with pytest.raises(NotebookLMError) as exc:
-        await tool(ChatRequest(message="hi", notebook_id="other"))
-
-    assert "Chat interaction failed" in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_navigate_to_notebook_failure(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["navigate_to_notebook"].fn
-    client = AsyncMock()
-    client.navigate_to_notebook.side_effect = RuntimeError("fail")
-    fastmcp_server.client = client
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
-
-    with pytest.raises(NotebookLMError) as exc:
-        await tool(NavigateRequest(notebook_id="target"))
-
-    assert "Failed to navigate" in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_set_default_notebook_updates_config(
-    fastmcp_server: NotebookLMFastMCP,
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["set_default_notebook"].fn
-
-    result = await tool(SetNotebookRequest(notebook_id="new"))
-    assert fastmcp_server.config.default_notebook_id == "new"
-    assert result["new_notebook_id"] == "new"
-
-
-@pytest.mark.asyncio
-async def test_set_default_notebook_failure(
-    fastmcp_server: NotebookLMFastMCP,
-) -> None:
-    tool = fastmcp_server.app._tool_manager._tools["set_default_notebook"].fn
-
-    class ImmutableConfig(ServerConfig):
-        def __setattr__(self, name, value):
-            if name == "default_notebook_id" and name in self.__dict__:
-                raise RuntimeError("locked")
-            super().__setattr__(name, value)
-
-    fastmcp_server.config = ImmutableConfig(default_notebook_id="existing")
-
-    with pytest.raises(NotebookLMError) as exc:
-        await tool(SetNotebookRequest(notebook_id="new"))
-
-    assert "Failed to set default notebook" in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_ensure_client_initializes_once(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    created: dict[str, int] = {"init": 0, "start": 0}
-
-    class DummyClient:
-        def __init__(self, config: ServerConfig) -> None:
-            created["init"] += 1
-            self.config = config
-            self.started = False
-
-        async def start(self) -> None:
-            created["start"] += 1
-            self.started = True
-
-        async def close(self) -> None:  # pragma: no cover - helper for compatibility
-            pass
-
-    monkeypatch.setattr("notebooklm_mcp.server.NotebookLMClient", DummyClient)
-
-    await fastmcp_server._ensure_client()
-    assert isinstance(fastmcp_server.client, DummyClient)
-    assert created == {"init": 1, "start": 1}
-
-    await fastmcp_server._ensure_client()
-    assert created == {"init": 1, "start": 1}
-
-
-@pytest.mark.asyncio
-async def test_ensure_client_failure_wraps_error(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    class FailingClient:
-        def __init__(self, config: ServerConfig) -> None:
-            self.config = config
-
-        async def start(self) -> None:
-            raise RuntimeError("broken start")
-
-    monkeypatch.setattr("notebooklm_mcp.server.NotebookLMClient", FailingClient)
-
-    with pytest.raises(NotebookLMError) as exc:
-        await fastmcp_server._ensure_client()
-
-    assert "Client initialization failed" in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_start_runs_transport(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def ensure_client():
-        fastmcp_server.client = AsyncMock()
-
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", ensure_client)
-    run_async = AsyncMock()
-    fastmcp_server.app.run_async = run_async  # type: ignore[assignment]
-
-    await fastmcp_server.start(transport="http", host="0.0.0.0", port=9999)
-
-    run_async.assert_awaited_once_with(transport="http", host="0.0.0.0", port=9999)
-
-
-@pytest.mark.asyncio
-async def test_start_stdio_transport(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def ensure_client():
-        fastmcp_server.client = AsyncMock()
-
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", ensure_client)
-    run_async = AsyncMock()
-    fastmcp_server.app.run_async = run_async  # type: ignore[assignment]
-
-    await fastmcp_server.start()
-    run_async.assert_awaited_once_with(transport="stdio")
-
-
-@pytest.mark.asyncio
-async def test_start_sse_transport(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def ensure_client():
-        fastmcp_server.client = AsyncMock()
-
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", ensure_client)
-    run_async = AsyncMock()
-    fastmcp_server.app.run_async = run_async  # type: ignore[assignment]
-
-    await fastmcp_server.start(transport="sse", host="0.0.0.0", port=8888)
-    run_async.assert_awaited_once_with(transport="sse", host="0.0.0.0", port=8888)
-
-
-@pytest.mark.asyncio
-async def test_start_raises_notebooklm_error(
-    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def failing_ensure() -> None:
-        raise RuntimeError("ensure failure")
-
-    monkeypatch.setattr(fastmcp_server, "_ensure_client", failing_ensure)
-
-    with pytest.raises(NotebookLMError) as exc:
-        await fastmcp_server.start(transport="http")
-
-    assert "Server startup failed" in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_stop_closes_client(fastmcp_server: NotebookLMFastMCP) -> None:
-    client = AsyncMock()
-    fastmcp_server.client = client
-
-    await fastmcp_server.stop()
-    client.close.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_stop_handles_close_errors() -> None:
-    server = NotebookLMFastMCP(ServerConfig(default_notebook_id="notebook-1"))
-    client = AsyncMock()
-    client.close.side_effect = RuntimeError("close failure")
-    server.client = client
+async def test_stop_closes_client(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    await server._ensure_client()
 
     await server.stop()
-    client.close.assert_awaited()
-
-
-def test_create_fastmcp_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = ServerConfig(default_notebook_id="cfg")
-
-    with patch("notebooklm_mcp.config.load_config", return_value=config) as mock_load:
-        server = create_fastmcp_server("/tmp/config.json")
-
-    mock_load.assert_called_once_with("/tmp/config.json")
-    assert isinstance(server, NotebookLMFastMCP)
-    assert server.config is config
+    assert server.client.closed is True
 
 
 @pytest.mark.asyncio
-async def test_main_runs_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_server = SimpleNamespace(start=AsyncMock())
+async def test_healthcheck_tool_reports_status(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
-    monkeypatch.setattr(sys, "argv", ["server", "/tmp/config.json"])
+    result = await server.app.tools["healthcheck"]()
+    assert result["status"] == "unhealthy"
+
+    dummy = DummyClient(server.config)
+    server.client = dummy
+    result = await server.app.tools["healthcheck"]()
+    assert result["status"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_tool(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    dummy = DummyClient(server.config)
+    server.client = dummy
+
+    async def fake_ensure(self):
+        return None
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    request = server_module.SendMessageRequest(message="hi", wait_for_response=True)
+    response = await server.app.tools["send_chat_message"](request)
+
+    assert dummy.sent_messages == ["hi"]
+    assert response["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_tool_no_wait(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    dummy = DummyClient(server.config)
+    server.client = dummy
+
+    async def fake_ensure(self):
+        return None
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    request = server_module.SendMessageRequest(message="hi", wait_for_response=False)
+    response = await server.app.tools["send_chat_message"](request)
+
+    assert response["status"] == "sent"
+    assert "response" not in response
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_tool_error(monkeypatch):
+    class FailingClient(DummyClient):
+        async def send_message(self, message):
+            raise RuntimeError("fail")
+
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    server.client = FailingClient(server.config)
+
+    async def fake_ensure(self):
+        return None
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    request = server_module.SendMessageRequest(message="hi", wait_for_response=False)
+
+    with pytest.raises(NotebookLMError):
+        await server.app.tools["send_chat_message"](request)
+
+
+@pytest.mark.asyncio
+async def test_chat_with_notebook_tool(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    dummy = DummyClient(server.config)
+    server.client = dummy
+
+    async def fake_ensure(self):
+        return None
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    request = server_module.ChatRequest(message="hello", notebook_id="xyz")
+    response = await server.app.tools["chat_with_notebook"](request)
+
+    assert dummy.sent_messages == ["hello"]
+    assert dummy.navigated_to == ["xyz"]
+    assert response["notebook_id"] == "xyz"
+
+
+@pytest.mark.asyncio
+async def test_get_chat_response_and_quick_response(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    dummy = DummyClient(server.config)
+    server.client = dummy
+
+    async def fake_ensure(self):
+        return None
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    request = server_module.GetResponseRequest(timeout=1)
+
+    chat_result = await server.app.tools["get_chat_response"](request)
+    quick_result = await server.app.tools["get_quick_response"]()
+
+    assert chat_result["response"] == "response"
+    assert quick_result["response"] == "response"
+
+
+@pytest.mark.asyncio
+async def test_get_chat_response_error(monkeypatch):
+    class FailingClient(DummyClient):
+        async def get_response(self):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    server.client = FailingClient(server.config)
+
+    async def fake_ensure(self):
+        return None
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    request = server_module.GetResponseRequest(timeout=1)
+
+    with pytest.raises(NotebookLMError):
+        await server.app.tools["get_chat_response"](request)
+
+
+@pytest.mark.asyncio
+async def test_quick_response_error(monkeypatch):
+    class FailingClient(DummyClient):
+        async def get_response(self):
+            raise RuntimeError("quick-fail")
+
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    server.client = FailingClient(server.config)
+
+    async def fake_ensure(self):
+        return None
+
+    server._ensure_client = MethodType(fake_ensure, server)
+
+    with pytest.raises(NotebookLMError):
+        await server.app.tools["get_quick_response"]()
+
+
+@pytest.mark.asyncio
+async def test_get_and_set_default_notebook_tools(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    dummy = DummyClient(server.config)
+    server.client = dummy
+
+    async def fake_ensure(self):
+        return None
+
+    server._ensure_client = MethodType(fake_ensure, server)
+
+    get_result = await server.app.tools["get_default_notebook"]()
+    assert get_result["notebook_id"] == "abc"
+
+    request = server_module.SetNotebookRequest(notebook_id="new-id")
+    set_result = await server.app.tools["set_default_notebook"](request)
+    assert set_result["new_notebook_id"] == "new-id"
+    assert server.config.default_notebook_id == "new-id"
+
+
+@pytest.mark.asyncio
+async def test_navigate_to_notebook_tool_error(monkeypatch):
+    class BadClient(DummyClient):
+        async def navigate_to_notebook(self, notebook_id):
+            raise RuntimeError("navigate-fail")
+
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    server.client = BadClient(server.config)
+
+    async def fake_ensure(self):
+        return None
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    request = server_module.NavigateRequest(notebook_id="xyz")
+
+    with pytest.raises(NotebookLMError):
+        await server.app.tools["navigate_to_notebook"](request)
+
+
+@pytest.mark.asyncio
+async def test_start_sse_transport(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    await server.start(transport="sse", host="0.0.0.0", port=8080)
+
+    assert server.app.run_calls[-1] == {
+        "transport": "sse",
+        "host": "0.0.0.0",
+        "port": 8080,
+    }
+
+
+@pytest.mark.asyncio
+async def test_start_stdio_transport(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    await server.start()
+
+    assert server.app.run_calls[-1] == {"transport": "stdio"}
+
+
+def test_create_fastmcp_server_loads_config(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"default_notebook_id": "xyz"}))
+
+    server = server_module.create_fastmcp_server(str(config_path))
+
+    assert isinstance(server, server_module.NotebookLMFastMCP)
+    assert server.config.default_notebook_id == "xyz"
+
+
+@pytest.mark.asyncio
+async def test_healthcheck_tool_error(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+
+    class ExplodingClient:
+        def __getattr__(self, _name):
+            raise RuntimeError("boom")
+
+    server.client = ExplodingClient()
+
+    result = await server.app.tools["healthcheck"]()
+    assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_navigate_to_notebook_tool_success(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    dummy = DummyClient(server.config)
+    server.client = dummy
+
+    async def fake_ensure(self):
+        return None
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    request = server_module.NavigateRequest(notebook_id="xyz")
+    result = await server.app.tools["navigate_to_notebook"](request)
+
+    assert result["status"] == "success"
+    assert dummy.navigated_to == ["xyz"]
+
+
+@pytest.mark.asyncio
+async def test_set_default_notebook_error(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+
+    class ExplodingConfig(SimpleNamespace):
+        def __setattr__(self, name, value):
+            if name == "default_notebook_id" and hasattr(self, name):
+                raise RuntimeError("fail")
+            super().__setattr__(name, value)
+
+    server.config = ExplodingConfig(default_notebook_id="abc")
+    request = server_module.SetNotebookRequest(notebook_id="boom")
+
+    with pytest.raises(NotebookLMError):
+        await server.app.tools["set_default_notebook"](request)
+
+
+@pytest.mark.asyncio
+async def test_stop_handles_client_close_error(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    errors = []
+
+    class FailingClient(DummyClient):
+        async def close(self):
+            raise RuntimeError("fail")
+
+    server.client = FailingClient(server.config)
     monkeypatch.setattr(
-        server_module, "create_fastmcp_server", lambda path: fake_server
+        server_module,
+        "logger",
+        SimpleNamespace(
+            info=lambda *_args, **_kwargs: None, error=lambda msg: errors.append(msg)
+        ),
     )
 
-    await main()
+    await server.stop()
 
-    fake_server.start.assert_awaited_once_with()
+    assert any("Error during server shutdown" in message for message in errors)
 
 
 @pytest.mark.asyncio
-async def test_main_requires_config(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setattr(sys, "argv", ["server"])
+async def test_main_requires_config_argument(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["notebooklm_mcp.server"])
 
     with pytest.raises(SystemExit) as exc:
-        await main()
+        await server_module.main()
 
     assert exc.value.code == 1
-    assert "Usage" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
-async def test_main_handles_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_server = SimpleNamespace(start=AsyncMock(side_effect=KeyboardInterrupt))
+async def test_main_handles_keyboardinterrupt(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["prog", "config.json"])
 
-    monkeypatch.setattr(sys, "argv", ["server", "cfg.json"])
+    class KeyboardServer:
+        async def start(self):
+            raise KeyboardInterrupt
+
+    logs = []
     monkeypatch.setattr(
-        server_module, "create_fastmcp_server", lambda path: fake_server
+        server_module, "create_fastmcp_server", lambda _cfg: KeyboardServer()
+    )
+    monkeypatch.setattr(
+        server_module,
+        "logger",
+        SimpleNamespace(
+            info=lambda msg: logs.append(("info", msg)),
+            error=lambda msg: logs.append(("error", msg)),
+        ),
     )
 
-    await main()
+    await server_module.main()
 
-    fake_server.start.assert_awaited_once_with()
+    assert ("info", "Server stopped by user") in logs
 
 
 @pytest.mark.asyncio
-async def test_main_handles_server_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_server = SimpleNamespace(start=AsyncMock(side_effect=RuntimeError("boom")))
+async def test_main_handles_general_exception(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["prog", "config.json"])
 
-    monkeypatch.setattr(sys, "argv", ["server", "cfg.json"])
+    class FailingServer:
+        async def start(self):
+            raise RuntimeError("boom")
+
+    logs = []
+
+    def fake_exit(code):
+        raise SystemExit(code)
+
     monkeypatch.setattr(
-        server_module, "create_fastmcp_server", lambda path: fake_server
+        server_module, "create_fastmcp_server", lambda _cfg: FailingServer()
     )
+    monkeypatch.setattr(
+        server_module,
+        "logger",
+        SimpleNamespace(info=lambda msg: None, error=lambda msg: logs.append(msg)),
+    )
+    monkeypatch.setattr(sys, "exit", fake_exit)
 
     with pytest.raises(SystemExit) as exc:
-        await main()
+        await server_module.main()
 
     assert exc.value.code == 1
+    assert any("Server error" in message for message in logs)

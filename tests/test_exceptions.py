@@ -1,24 +1,17 @@
-from notebooklm_mcp.exceptions import (
-    AuthenticationError,
-    ChatError,
-    ConfigurationError,
-    NavigationError,
-    NotebookLMError,
-    StreamingError,
-)
+from notebooklm_mcp import exceptions
 
 
-def test_exception_hierarchy() -> None:
-    error = NotebookLMError("base")
-    assert str(error) == "base"
+def test_exceptions_inherit_base():
+    error = exceptions.AuthenticationError("auth")
+    assert isinstance(error, exceptions.NotebookLMError)
+    assert str(error) == "auth"
 
-    for exc_cls in (AuthenticationError, ChatError, NavigationError, StreamingError):
-        derived = exc_cls("problem")
-        assert isinstance(derived, NotebookLMError)
-        assert "problem" in str(derived)
-
-
-def test_configuration_error_is_distinct() -> None:
-    err = ConfigurationError("config issue")
-    assert isinstance(err, NotebookLMError)
-    assert "config" in str(err)
+    for exc_cls in [
+        exceptions.StreamingError,
+        exceptions.NavigationError,
+        exceptions.ChatError,
+        exceptions.ConfigurationError,
+    ]:
+        exc = exc_cls("boom")
+        assert isinstance(exc, exceptions.NotebookLMError)
+        assert "boom" in str(exc)
