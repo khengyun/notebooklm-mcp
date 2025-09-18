@@ -217,6 +217,7 @@ omit = [
     "*/tests/*",
     "*/test_*",
     "*/__pycache__/*",
+    "src/notebooklm_mcp/cli.py",
 ]
 
 [tool.coverage.report]

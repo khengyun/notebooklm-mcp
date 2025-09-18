@@ -1,10 +1,8 @@
-"""Sanity checks for the lightweight HTTP client helpers used in docs/examples."""
-
 from notebooklm_mcp.config import ServerConfig
 
 
 class FastMCPHttpClient:
-    """Minimal helper mirroring the example HTTP client."""
+    """Minimal helper mirroring the documentation examples."""
 
     def __init__(self, base_url: str = "http://127.0.0.1:8001") -> None:
         self.base_url = base_url.rstrip("/")
@@ -23,8 +21,6 @@ class FastMCPHttpClient:
 
 
 def test_http_client_url_building() -> None:
-    """The helper should normalise base URLs and provide health endpoint URLs."""
-
     client = FastMCPHttpClient("http://example.com/api/")
 
     assert client.base_url == "http://example.com/api"
@@ -33,10 +29,7 @@ def test_http_client_url_building() -> None:
 
 
 def test_http_client_builds_json_rpc_payload() -> None:
-    """Ensure that the example payload matches the JSON-RPC contract."""
-
     client = FastMCPHttpClient()
-
     payload = client.build_list_tools_request()
 
     assert payload["jsonrpc"] == "2.0"
@@ -44,11 +37,9 @@ def test_http_client_builds_json_rpc_payload() -> None:
     assert payload["params"] == {}
 
 
-def test_http_client_defaults_align_with_config() -> None:
-    """The documented base URL should match the default server configuration."""
-
-    config = ServerConfig()
+def test_http_client_defaults_match_config() -> None:
     client = FastMCPHttpClient()
+    config = ServerConfig()
 
     assert client.base_url.startswith("http://127.0.0.1")
     assert config.base_url == "https://notebooklm.google.com"

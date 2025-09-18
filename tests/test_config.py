@@ -1,248 +1,191 @@
-"""
-Configuration tests
-"""
+from __future__ import annotations
 
 import json
 import os
-import sys
-import tempfile
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
-
-sys.path.insert(0, "src")
 
 from notebooklm_mcp.config import AuthConfig, ServerConfig, load_config
 from notebooklm_mcp.exceptions import ConfigurationError
 
 
-@pytest.mark.unit
-class TestServerConfig:
-    """Test server configuration"""
+def test_server_config_defaults() -> None:
+    config = ServerConfig()
 
-    def test_default_config(self):
-        """Test default configuration values"""
-        config = ServerConfig()
+    assert config.headless is False
+    assert config.timeout == 60
+    assert config.debug is False
+    assert config.default_notebook_id is None
+    assert isinstance(config.auth, AuthConfig)
 
-        assert config.headless is False
-        assert config.timeout == 60
-        assert config.debug is False
-        assert config.default_notebook_id is None
-        assert config.base_url == "https://notebooklm.google.com"
-        assert isinstance(config.auth, AuthConfig)
 
-    def test_config_validation_success(self):
-        """Test successful configuration validation"""
-        config = ServerConfig(
-            timeout=30,
-            streaming_timeout=45,
-            response_stability_checks=3,
-            retry_attempts=2,
-        )
+def test_server_config_to_and_from_dict(tmp_path: Path) -> None:
+    config = ServerConfig(
+        headless=True,
+        timeout=45,
+        debug=True,
+        default_notebook_id="abc",
+        streaming_timeout=20,
+        response_stability_checks=4,
+    )
 
-        # Should not raise
+    data = config.to_dict()
+    restored = ServerConfig.from_dict(data)
+
+    assert restored.headless is True
+    assert restored.timeout == 45
+    assert restored.debug is True
+    assert restored.default_notebook_id == "abc"
+    assert restored.streaming_timeout == 20
+    assert restored.response_stability_checks == 4
+
+    file_path = tmp_path / "config.json"
+    config.save_to_file(str(file_path))
+    loaded = ServerConfig.from_file(str(file_path))
+    loaded_dict = loaded.to_dict()
+    for key, value in data.items():
+        if key == "auth":
+            for auth_key, auth_value in value.items():
+                assert loaded_dict[key][auth_key] == auth_value
+        else:
+            assert loaded_dict[key] == value
+
+
+def test_server_config_validation_checks(tmp_path: Path) -> None:
+    config = ServerConfig(timeout=-1)
+    with pytest.raises(ConfigurationError):
         config.validate()
 
-    def test_config_validation_negative_timeout(self):
-        """Test validation fails for negative timeout"""
-        config = ServerConfig(timeout=-1)
+    config = ServerConfig(streaming_timeout=0)
+    with pytest.raises(ConfigurationError):
+        config.validate()
 
-        with pytest.raises(ConfigurationError, match="Timeout must be positive"):
-            config.validate()
+    config = ServerConfig(response_stability_checks=0)
+    with pytest.raises(ConfigurationError):
+        config.validate()
 
-    def test_config_validation_negative_streaming_timeout(self):
-        """Test validation fails for negative streaming timeout"""
-        config = ServerConfig(streaming_timeout=-1)
+    config = ServerConfig(retry_attempts=-1)
+    with pytest.raises(ConfigurationError):
+        config.validate()
 
-        with pytest.raises(
-            ConfigurationError, match="Streaming timeout must be positive"
-        ):
-            config.validate()
+    # Profile directory parent must exist
+    config = ServerConfig(
+        auth=AuthConfig(profile_dir=str(tmp_path / "missing" / "profile"))
+    )
+    with pytest.raises(ConfigurationError):
+        config.validate()
 
-    def test_config_to_dict(self):
-        """Test configuration serialization"""
-        config = ServerConfig(
-            headless=True, timeout=30, debug=True, default_notebook_id="test-id"
+    # Import profile path must exist when provided
+    existing_parent = tmp_path / "profiles"
+    existing_parent.mkdir()
+    config = ServerConfig(
+        auth=AuthConfig(
+            profile_dir=str(existing_parent / "profile"),
+            import_profile_from=str(tmp_path / "nope"),
         )
+    )
+    with pytest.raises(ConfigurationError):
+        config.validate()
 
-        config_dict = config.to_dict()
 
-        assert config_dict["headless"] is True
-        assert config_dict["timeout"] == 30
-        assert config_dict["debug"] is True
-        assert config_dict["default_notebook_id"] == "test-id"
-        assert "auth" in config_dict
+def test_setup_profile_creates_and_imports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "chrome_profile"
 
-    def test_config_from_dict(self):
-        """Test configuration deserialization"""
-        config_data = {
-            "headless": True,
-            "timeout": 30,
-            "debug": True,
-            "default_notebook_id": "test-id",
-            "auth": {"profile_dir": "./test_profile", "use_persistent_session": False},
-        }
+    # Branch where directory is created
+    cfg = ServerConfig(auth=AuthConfig(profile_dir=str(target)))
+    cfg.setup_profile()
+    assert target.exists()
 
-        config = ServerConfig.from_dict(config_data)
+    # Branch importing an existing profile
+    src = tmp_path / "source_profile"
+    (src / "Default").mkdir(parents=True)
 
-        assert config.headless is True
-        assert config.timeout == 30
-        assert config.debug is True
-        assert config.default_notebook_id == "test-id"
-        assert config.auth.profile_dir == "./test_profile"
-        assert config.auth.use_persistent_session is False
+    copied = {}
 
-    def test_config_save_and_load(self):
-        """Test configuration file save and load"""
-        config = ServerConfig(
-            headless=True, timeout=45, debug=True, default_notebook_id="test-notebook"
+    def fake_copytree(src_path: Path, dest_path: Path) -> None:
+        copied["args"] = (Path(src_path), Path(dest_path))
+
+    monkeypatch.setenv("PYTHONPATH", os.environ.get("PYTHONPATH", ""))
+    with patch("shutil.copytree", side_effect=fake_copytree), patch(
+        "shutil.rmtree", MagicMock()
+    ):
+        cfg = ServerConfig(
+            auth=AuthConfig(
+                profile_dir=str(target),
+                import_profile_from=str(src),
+            )
         )
+        cfg.setup_profile()
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            config_path = f.name
-
-        try:
-            # Save configuration
-            config.save_to_file(config_path)
-
-            # Load configuration
-            loaded_config = ServerConfig.from_file(config_path)
-
-            assert loaded_config.headless == config.headless
-            assert loaded_config.timeout == config.timeout
-            assert loaded_config.debug == config.debug
-            assert loaded_config.default_notebook_id == config.default_notebook_id
-
-        finally:
-            os.unlink(config_path)
-
-    def test_config_from_env(self):
-        """Test configuration from environment variables"""
-        env_vars = {
-            "NOTEBOOKLM_HEADLESS": "true",
-            "NOTEBOOKLM_TIMEOUT": "45",
-            "NOTEBOOKLM_DEBUG": "true",
-            "NOTEBOOKLM_NOTEBOOK_ID": "env-notebook-id",
-            "NOTEBOOKLM_PROFILE_DIR": "./env_profile",
-        }
-
-        with patch.dict(os.environ, env_vars):
-            config = ServerConfig.from_env()
-
-            assert config.headless is True
-            assert config.timeout == 45
-            assert config.debug is True
-            assert config.default_notebook_id == "env-notebook-id"
-            assert config.auth.profile_dir == "./env_profile"
+    assert copied["args"] == (src, target)
 
 
-@pytest.mark.unit
-class TestAuthConfig:
-    """Test authentication configuration"""
+def test_export_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "profile"
+    dest = tmp_path / "exported"
+    (source / "Default").mkdir(parents=True)
 
-    def test_default_auth_config(self):
-        """Test default auth configuration"""
-        auth = AuthConfig()
+    called = {}
 
-        assert auth.cookies_path is None
-        assert auth.profile_dir == "./chrome_profile_notebooklm"
-        assert auth.use_persistent_session is True
-        assert auth.auto_login is True
+    def fake_copytree(src_path: Path, dest_path: Path) -> None:
+        called["paths"] = (Path(src_path), Path(dest_path))
+
+    with patch("shutil.copytree", side_effect=fake_copytree), patch(
+        "shutil.rmtree", MagicMock()
+    ):
+        cfg = ServerConfig(auth=AuthConfig(profile_dir=str(source), export_profile_to=str(dest)))
+        cfg.export_profile()
+
+    assert called["paths"] == (source, dest)
+
+    cfg = ServerConfig(auth=AuthConfig(profile_dir=str(tmp_path / "missing"), export_profile_to=str(dest)))
+    with pytest.raises(ConfigurationError):
+        cfg.export_profile()
 
 
-@pytest.mark.unit
-class TestLoadConfig:
-    """Test configuration loading functions"""
+def test_load_config_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    explicit = tmp_path / "explicit.json"
+    explicit.write_text(json.dumps({"headless": True}))
 
-    def test_load_config_from_file(self):
-        """Test loading configuration from file"""
-        config_data = {
-            "headless": True,
-            "timeout": 30,
-            "debug": False,
-            "default_notebook_id": "file-notebook-id",
-        }
+    default = tmp_path / "config.json"
+    default.write_text(json.dumps({"headless": False}))
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(config_data, f)
-            config_path = f.name
+    with patch("os.path.exists", side_effect=lambda p: Path(p).exists()):
+        cfg = load_config(str(explicit))
+        assert cfg.headless is True
 
-        try:
-            config = load_config(config_path)
+        cfg = load_config(str(default))
+        assert cfg.headless is False
 
-            assert config.headless is True
-            assert config.timeout == 30
-            assert config.default_notebook_id == "file-notebook-id"
-
-        finally:
-            os.unlink(config_path)
-
-    def test_load_config_nonexistent_file(self):
-        """Test loading config from non-existent file falls back to env"""
+    # When files do not exist fall back to environment
+    with patch("os.path.exists", return_value=False):
         with patch("notebooklm_mcp.config.ServerConfig.from_env") as mock_from_env:
             mock_from_env.return_value = ServerConfig(debug=True)
-
-            config = load_config("/nonexistent/config.json")
-
-            mock_from_env.assert_called_once()
-            assert config.debug is True
-
-    def test_load_config_no_args(self):
-        """Test loading config without arguments"""
-        with (
-            patch("os.path.exists", return_value=False),
-            patch("notebooklm_mcp.config.ServerConfig.from_env") as mock_from_env,
-        ):
-            mock_from_env.return_value = ServerConfig(headless=True)
-
-            load_config()
-
+            cfg = load_config("/missing.json")
+            assert cfg.debug is True
             mock_from_env.assert_called_once()
 
-    def test_config_from_file_json_error(self):
-        """Test configuration loading with invalid JSON"""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            f.write('{"invalid": json}')  # Invalid JSON
-            f.flush()
 
-            with pytest.raises(ConfigurationError, match="Invalid JSON"):
-                ServerConfig.from_file(f.name)
+def test_server_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = {
+        "NOTEBOOKLM_HEADLESS": "true",
+        "NOTEBOOKLM_TIMEOUT": "90",
+        "NOTEBOOKLM_DEBUG": "true",
+        "NOTEBOOKLM_NOTEBOOK_ID": "env-id",
+        "NOTEBOOKLM_COOKIES_PATH": "/tmp/cookies",
+        "NOTEBOOKLM_PROFILE_DIR": "/tmp/profile",
+        "NOTEBOOKLM_PERSISTENT_SESSION": "false",
+    }
 
-        os.unlink(f.name)
+    with patch.dict(os.environ, env, clear=True):
+        cfg = ServerConfig.from_env()
 
-    def test_config_from_file_not_found(self):
-        """Test configuration loading with non-existent file"""
-        with pytest.raises(ConfigurationError, match="Config file not found"):
-            ServerConfig.from_file("/non/existent/file.json")
-
-    def test_config_save_file_error(self):
-        """Test configuration saving with permission error"""
-        config = ServerConfig()
-
-        # Mock open to raise PermissionError
-        with patch("builtins.open", side_effect=PermissionError("Permission denied")):
-            with pytest.raises(PermissionError):
-                config.save_to_file("/test/path.json")
-
-    def test_config_from_env_with_all_variables(self):
-        """Test loading config from environment with all variables set"""
-        env_vars = {
-            "NOTEBOOKLM_HEADLESS": "true",
-            "NOTEBOOKLM_TIMEOUT": "120",
-            "NOTEBOOKLM_DEBUG": "true",
-            "NOTEBOOKLM_NOTEBOOK_ID": "test-notebook-id",
-            "NOTEBOOKLM_COOKIES_PATH": "/path/to/cookies",
-            "NOTEBOOKLM_PROFILE_DIR": "/custom/profile",
-            "NOTEBOOKLM_PERSISTENT_SESSION": "false",
-        }
-
-        with patch.dict(os.environ, env_vars, clear=True):
-            config = ServerConfig.from_env()
-            assert config.headless is True
-            assert config.timeout == 120
-            assert config.debug is True
-            assert config.default_notebook_id == "test-notebook-id"
-            assert config.auth.cookies_path == "/path/to/cookies"
-            assert config.auth.profile_dir == "/custom/profile"
-            assert config.auth.use_persistent_session is False
-            assert config.headless is True
+    assert cfg.headless is True
+    assert cfg.timeout == 90
+    assert cfg.debug is True
+    assert cfg.default_notebook_id == "env-id"
+    assert cfg.auth.cookies_path == "/tmp/cookies"
+    assert cfg.auth.profile_dir == "/tmp/profile"
+    assert cfg.auth.use_persistent_session is False

@@ -1,180 +1,289 @@
-"""
-Unit tests for NotebookLM MCP client
-"""
+from __future__ import annotations
 
-from unittest.mock import Mock, patch
+import asyncio
+from dataclasses import dataclass
+import types
+from typing import List
 
 import pytest
 
-from notebooklm_mcp import NotebookLMClient, ServerConfig
-from notebooklm_mcp.exceptions import ChatError
+from notebooklm_mcp.client import NotebookLMClient, TimeoutException
+from notebooklm_mcp.config import ServerConfig
+from notebooklm_mcp.exceptions import AuthenticationError, ChatError, NavigationError
+
+
+@dataclass
+class FakeElement:
+    text: str = ""
+    displayed: bool = True
+    enabled: bool = True
+
+    def clear(self) -> None:
+        self.text = ""
+
+    def send_keys(self, value: str) -> None:
+        self.text += value
+
+    def is_displayed(self) -> bool:
+        return self.displayed
+
+    def is_enabled(self) -> bool:
+        return self.enabled
+
+
+class FakeDriver:
+    def __init__(self) -> None:
+        self.current_url = "https://notebooklm.google.com/notebook/default"
+        self._store: dict[str, List[FakeElement]] = {}
+        self.set_timeout: int | None = None
+        self.quit_called = False
+        self.visited: list[str] = []
+
+    def set_page_load_timeout(self, value: int) -> None:
+        self.set_timeout = value
+
+    def get(self, url: str) -> None:
+        self.visited.append(url)
+        self.current_url = url
+
+    def find_elements(self, _by: str, selector: str) -> List[FakeElement]:
+        return self._store.get(selector, [])
+
+    def add_elements(self, selector: str, *elements: FakeElement) -> None:
+        self._store[selector] = list(elements)
+
+    def execute_script(self, script: str) -> None:
+        self.last_script = script
+
+    def quit(self) -> None:
+        self.quit_called = True
 
 
 @pytest.fixture
-def config():
-    """Test configuration"""
-    return ServerConfig(
-        default_notebook_id="test-notebook-id", headless=True, debug=True
+def config(tmp_path) -> ServerConfig:
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    return ServerConfig(auth=ServerConfig().auth, default_notebook_id="abc", headless=True)
+
+
+@pytest.fixture
+def client(config: ServerConfig) -> NotebookLMClient:
+    return NotebookLMClient(config)
+
+
+def test_start_browser_uses_regular_chrome(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_driver = FakeDriver()
+
+    monkeypatch.setattr("notebooklm_mcp.client.USE_UNDETECTED", False)
+    monkeypatch.setattr("notebooklm_mcp.client.webdriver.Chrome", lambda **_: fake_driver)
+
+    client._start_browser()
+
+    assert client.driver is fake_driver
+    assert fake_driver.set_timeout is not None
+
+
+def test_start_browser_uses_undetected_when_available(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_driver = FakeDriver()
+
+    class DummyOptions:
+        def __init__(self) -> None:
+            self.arguments: list[str] = []
+
+        def add_argument(self, argument: str) -> None:
+            self.arguments.append(argument)
+
+    monkeypatch.setattr("notebooklm_mcp.client.USE_UNDETECTED", True)
+    monkeypatch.setattr("notebooklm_mcp.client.uc.ChromeOptions", DummyOptions)
+    monkeypatch.setattr("notebooklm_mcp.client.uc.Chrome", lambda **_: fake_driver)
+
+    client._start_browser()
+    assert client.driver is fake_driver
+
+
+@pytest.mark.asyncio
+async def test_start_async_uses_executor(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_driver = FakeDriver()
+
+    def fake_start_browser() -> None:
+        client.driver = fake_driver
+
+    monkeypatch.setattr(client, "_start_browser", fake_start_browser)
+
+    loop = asyncio.get_running_loop()
+
+    class ImmediateLoop:
+        def __init__(self, real_loop: asyncio.AbstractEventLoop) -> None:
+            self._real_loop = real_loop
+
+        def run_in_executor(self, _executor, func, *args):
+            future = self._real_loop.create_future()
+            try:
+                result = func(*args)
+            except Exception as exc:  # pragma: no cover - defensive
+                future.set_exception(exc)
+            else:
+                future.set_result(result)
+            return future
+
+    monkeypatch.setattr("asyncio.get_event_loop", lambda: ImmediateLoop(loop))
+
+    await client.start()
+    assert client.driver is fake_driver
+
+
+def test_authenticate_sync_sets_flag(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    driver = FakeDriver()
+    driver.add_elements(("body"), FakeElement("ready"))
+    client.driver = driver
+
+    client._authenticate_sync()
+    assert client._is_authenticated is True
+
+
+def test_authenticate_sync_requires_login(client: NotebookLMClient) -> None:
+    driver = FakeDriver()
+    driver.current_url = "https://accounts.google.com/signin"
+    driver.add_elements("body", FakeElement("ready"))
+    driver.get = lambda url: None
+    client.driver = driver
+
+    result = client._authenticate_sync()
+    assert result is False
+    assert client._is_authenticated is False
+
+
+@pytest.mark.asyncio
+async def test_authenticate_raises_without_driver(client: NotebookLMClient) -> None:
+    with pytest.raises(AuthenticationError):
+        await client.authenticate()
+
+
+def test_send_message_sync_populates_element(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    driver = FakeDriver()
+    element = FakeElement()
+    driver.find_elements = lambda _by, _selector: [element]
+    driver.current_url = "https://notebooklm.google.com/notebook/abc"
+    client.driver = driver
+    client._is_authenticated = True
+
+    monkeypatch.setattr(
+        "notebooklm_mcp.client.WebDriverWait", lambda *_args, **_kwargs: types.SimpleNamespace(
+            until=lambda predicate: predicate(driver)
+        )
     )
 
-
-@pytest.fixture
-def mock_driver():
-    """Mock Selenium WebDriver"""
-    driver = Mock()
-    driver.current_url = "https://notebooklm.google.com/notebook/test-notebook-id"
-    driver.get = Mock()
-    driver.find_elements = Mock(return_value=[])
-    driver.quit = Mock()
-    return driver
+    client._send_message_sync("hello")
+    assert element.text.startswith("hello")
 
 
-@pytest.mark.unit
-class TestNotebookLMClient:
-    """Test NotebookLM client functionality"""
+@pytest.mark.asyncio
+async def test_send_message_async_requires_auth(client: NotebookLMClient) -> None:
+    with pytest.raises(ChatError):
+        await client.send_message("hi")
 
-    def test_client_initialization(self, config):
-        """Test client initialization"""
-        client = NotebookLMClient(config)
-        assert client.config == config
-        assert client.driver is None
-        assert client.current_notebook_id == config.default_notebook_id
-        assert not client._is_authenticated
 
-    @pytest.mark.asyncio
-    async def test_start_browser(self, config, mock_driver):
-        """Test browser startup"""
-        client = NotebookLMClient(config)
+def test_send_message_sync_raises_when_missing(client: NotebookLMClient) -> None:
+    driver = FakeDriver()
+    driver.current_url = "https://notebooklm.google.com/notebook/abc"
+    client.driver = driver
+    client._is_authenticated = True
 
-        with (
-            patch("notebooklm_mcp.client.uc.Chrome", return_value=mock_driver),
-            patch("notebooklm_mcp.client.webdriver.Chrome", return_value=mock_driver),
-        ):
-            await client.start()
+    with pytest.raises(ChatError):
+        client._send_message_sync("hi")
 
-        assert client.driver is not None
-        mock_driver.set_page_load_timeout.assert_called_once_with(config.timeout)
 
-    @pytest.mark.asyncio
-    async def test_authentication_success(self, config, mock_driver):
-        """Test successful authentication"""
-        client = NotebookLMClient(config)
-        client.driver = mock_driver
+def test_wait_for_streaming_response_returns_final(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    driver = FakeDriver()
+    client.driver = driver
 
-        # Mock successful authentication
-        mock_driver.current_url = (
-            "https://notebooklm.google.com/notebook/test-notebook-id"
-        )
+    values = ["first", "final"]
 
-        with patch("notebooklm_mcp.client.WebDriverWait") as mock_wait:
-            mock_wait.return_value.until.return_value = True
+    def fake_current_response() -> str:
+        return values.pop(0) if values else "final"
 
-            result = await client.authenticate()
+    monkeypatch.setattr(client, "_get_current_response", fake_current_response)
+    monkeypatch.setattr(client, "_check_streaming_indicators", lambda: False)
+    monkeypatch.setattr("time.sleep", lambda _t: None)
 
-        assert result is True
-        assert client._is_authenticated is True
+    result = client._wait_for_streaming_response(3)
+    assert result == "final"
 
-    @pytest.mark.asyncio
-    async def test_authentication_failure(self, config, mock_driver):
-        """Test authentication failure"""
-        client = NotebookLMClient(config)
-        client.driver = mock_driver
 
-        # Mock authentication failure (redirect to login)
-        mock_driver.current_url = "https://accounts.google.com/signin"
+def test_get_response_quick_returns_latest(client: NotebookLMClient) -> None:
+    driver = FakeDriver()
+    driver.add_elements("[data-testid*='response']", FakeElement("answer"))
+    client.driver = driver
 
-        with patch("notebooklm_mcp.client.WebDriverWait") as mock_wait:
-            mock_wait.return_value.until.return_value = True
+    result = client._get_current_response()
+    assert "answer" in result
 
-            result = await client.authenticate()
 
-        assert result is False
-        assert client._is_authenticated is False
+def test_get_current_response_fallback_text(client: NotebookLMClient) -> None:
+    driver = FakeDriver()
 
-    @pytest.mark.asyncio
-    async def test_send_message_success(self, config, mock_driver):
-        """Test successful message sending"""
-        client = NotebookLMClient(config)
-        client.driver = mock_driver
-        client._is_authenticated = True
+    def find_elements(by: str, selector: str) -> List[FakeElement]:
+        if selector == "p, div, span":
+            long_text = "Here is the answer " + "detail " * 5
+            return [FakeElement("Intro"), FakeElement(long_text)]
+        return []
 
-        # Mock chat input element
-        mock_input = Mock()
-        mock_input.clear = Mock()
-        mock_input.send_keys = Mock()
+    driver.find_elements = find_elements  # type: ignore[assignment]
+    client.driver = driver
 
-        with patch("notebooklm_mcp.client.WebDriverWait") as mock_wait:
-            mock_wait.return_value.until.return_value = mock_input
+    text = client._get_current_response()
+    assert "Here is the answer" in text
 
-            await client.send_message("Test message")
 
-        mock_input.clear.assert_called_once()
-        mock_input.send_keys.assert_called()
+def test_clean_response_text_removes_ui_artifacts(client: NotebookLMClient) -> None:
+    messy = "Line 1\ncopy_all\nthumb_up\nUseful content"
+    cleaned = client._clean_response_text(messy)
+    assert "copy_all" not in cleaned
+    assert "Useful content" in cleaned
 
-    @pytest.mark.asyncio
-    async def test_send_message_not_authenticated(self, config):
-        """Test message sending when not authenticated"""
-        client = NotebookLMClient(config)
-        client._is_authenticated = False
 
-        with pytest.raises(ChatError):
-            await client.send_message("Test message")
+def test_navigate_to_notebook_updates_state(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    driver = FakeDriver()
+    client.driver = driver
 
-    @pytest.mark.asyncio
-    async def test_get_response_quick(self, config, mock_driver):
-        """Test quick response retrieval"""
-        client = NotebookLMClient(config)
-        client.driver = mock_driver
+    class DummyWait:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
 
-        # Mock response element
-        mock_element = Mock()
-        mock_element.text = "Test response"
-        mock_driver.find_elements.return_value = [mock_element]
+        def until(self, predicate):
+            return predicate(driver)
 
-        response = await client.get_response(wait_for_completion=False)
-        assert response == "Test response"
+    monkeypatch.setattr("notebooklm_mcp.client.WebDriverWait", DummyWait)
 
-    @pytest.mark.asyncio
-    async def test_get_response_streaming(self, config, mock_driver):
-        """Test streaming response retrieval"""
-        client = NotebookLMClient(config)
-        client.driver = mock_driver
+    url = client._navigate_to_notebook_sync("target")
+    assert "target" in url
+    assert client.current_notebook_id == "target"
 
-        # Mock stable response after streaming
-        mock_element = Mock()
-        mock_element.text = "Complete response"
-        mock_driver.find_elements.return_value = [mock_element]
 
-        with patch("time.sleep"):  # Speed up test
-            response = await client.get_response(wait_for_completion=True, max_wait=5)
+def test_navigate_to_notebook_timeout(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    driver = FakeDriver()
+    client.driver = driver
 
-        assert response == "Complete response"
+    class DummyWait:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
 
-    @pytest.mark.asyncio
-    async def test_navigate_to_notebook(self, config, mock_driver):
-        """Test notebook navigation"""
-        client = NotebookLMClient(config)
-        client.driver = mock_driver
+        def until(self, _predicate):
+            raise TimeoutException("timeout")
 
-        with patch("notebooklm_mcp.client.WebDriverWait") as mock_wait:
-            mock_wait.return_value.until.return_value = True
+    monkeypatch.setattr("notebooklm_mcp.client.WebDriverWait", DummyWait)
 
-            await client.navigate_to_notebook("new-notebook-id")
+    with pytest.raises(NavigationError):
+        client._navigate_to_notebook_sync("missing")
 
-        assert client.current_notebook_id == "new-notebook-id"
-        mock_driver.get.assert_called_with(
-            "https://notebooklm.google.com/notebook/new-notebook-id"
-        )
 
-    @pytest.mark.asyncio
-    async def test_close(self, config, mock_driver):
-        """Test client cleanup"""
-        client = NotebookLMClient(config)
-        client.driver = mock_driver
-        client._is_authenticated = True
+@pytest.mark.asyncio
+async def test_close_shuts_down_driver(client: NotebookLMClient) -> None:
+    driver = FakeDriver()
+    client.driver = driver
+    client._is_authenticated = True
 
-        await client.close()
-
-        assert client.driver is None
-        assert client._is_authenticated is False
-        mock_driver.quit.assert_called_once()
+    await client.close()
+    assert client.driver is None
+    assert client._is_authenticated is False
+    assert driver.quit_called
