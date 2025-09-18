@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from notebooklm_mcp.cli import create_default_config, extract_notebook_id, update_config_to_headless
+from notebooklm_mcp.cli import (
+    create_default_config,
+    extract_notebook_id,
+    update_config_to_headless,
+)
 
 
 def test_extract_notebook_id_from_full_url() -> None:

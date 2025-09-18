@@ -39,7 +39,9 @@ def test_tools_registered(fastmcp_server: NotebookLMFastMCP) -> None:
 
 
 @pytest.mark.asyncio
-async def test_healthcheck_reports_authentication_state(fastmcp_server: NotebookLMFastMCP) -> None:
+async def test_healthcheck_reports_authentication_state(
+    fastmcp_server: NotebookLMFastMCP,
+) -> None:
     tool = fastmcp_server.app._tool_manager._tools["healthcheck"].fn
 
     status = await tool()
@@ -76,7 +78,9 @@ async def test_healthcheck_reports_needs_auth_and_errors(
 
 
 @pytest.mark.asyncio
-async def test_send_chat_message_tool(fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_send_chat_message_tool(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tool = fastmcp_server.app._tool_manager._tools["send_chat_message"].fn
 
     client = AsyncMock()
@@ -94,7 +98,9 @@ async def test_send_chat_message_tool(fastmcp_server: NotebookLMFastMCP, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_send_chat_message_failure_wraps_error(fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_send_chat_message_failure_wraps_error(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tool = fastmcp_server.app._tool_manager._tools["send_chat_message"].fn
 
     async def fail():
@@ -107,7 +113,9 @@ async def test_send_chat_message_failure_wraps_error(fastmcp_server: NotebookLMF
 
 
 @pytest.mark.asyncio
-async def test_get_quick_response(fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_get_quick_response(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tool = fastmcp_server.app._tool_manager._tools["get_quick_response"].fn
     fastmcp_server.client = AsyncMock(get_response=AsyncMock(return_value="hello"))
     monkeypatch.setattr(fastmcp_server, "_ensure_client", AsyncMock())
@@ -117,7 +125,9 @@ async def test_get_quick_response(fastmcp_server: NotebookLMFastMCP, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_chat_with_notebook_switches_notebooks(fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_chat_with_notebook_switches_notebooks(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tool = fastmcp_server.app._tool_manager._tools["chat_with_notebook"].fn
     client = AsyncMock()
     fastmcp_server.client = client
@@ -131,7 +141,9 @@ async def test_chat_with_notebook_switches_notebooks(fastmcp_server: NotebookLMF
 
 
 @pytest.mark.asyncio
-async def test_navigate_to_notebook_tool(fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_navigate_to_notebook_tool(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tool = fastmcp_server.app._tool_manager._tools["navigate_to_notebook"].fn
     client = AsyncMock()
     fastmcp_server.client = client
@@ -143,7 +155,9 @@ async def test_navigate_to_notebook_tool(fastmcp_server: NotebookLMFastMCP, monk
 
 
 @pytest.mark.asyncio
-async def test_set_default_notebook_updates_config(fastmcp_server: NotebookLMFastMCP) -> None:
+async def test_set_default_notebook_updates_config(
+    fastmcp_server: NotebookLMFastMCP,
+) -> None:
     tool = fastmcp_server.app._tool_manager._tools["set_default_notebook"].fn
 
     result = await tool(SetNotebookRequest(notebook_id="new"))
@@ -200,7 +214,9 @@ async def test_ensure_client_failure_wraps_error(
 
 
 @pytest.mark.asyncio
-async def test_start_runs_transport(fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_start_runs_transport(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def ensure_client():
         fastmcp_server.client = AsyncMock()
 
@@ -214,7 +230,9 @@ async def test_start_runs_transport(fastmcp_server: NotebookLMFastMCP, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_start_stdio_transport(fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_start_stdio_transport(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def ensure_client():
         fastmcp_server.client = AsyncMock()
 
@@ -227,7 +245,9 @@ async def test_start_stdio_transport(fastmcp_server: NotebookLMFastMCP, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_start_sse_transport(fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_start_sse_transport(
+    fastmcp_server: NotebookLMFastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def ensure_client():
         fastmcp_server.client = AsyncMock()
 

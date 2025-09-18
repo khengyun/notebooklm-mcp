@@ -63,7 +63,9 @@ class FakeDriver:
 def config(tmp_path) -> ServerConfig:
     profile = tmp_path / "profile"
     profile.mkdir()
-    return ServerConfig(auth=ServerConfig().auth, default_notebook_id="abc", headless=True)
+    return ServerConfig(
+        auth=ServerConfig().auth, default_notebook_id="abc", headless=True
+    )
 
 
 @pytest.fixture
@@ -71,11 +73,15 @@ def client(config: ServerConfig) -> NotebookLMClient:
     return NotebookLMClient(config)
 
 
-def test_start_browser_uses_regular_chrome(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_browser_uses_regular_chrome(
+    client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fake_driver = FakeDriver()
 
     monkeypatch.setattr("notebooklm_mcp.client.USE_UNDETECTED", False)
-    monkeypatch.setattr("notebooklm_mcp.client.webdriver.Chrome", lambda **_: fake_driver)
+    monkeypatch.setattr(
+        "notebooklm_mcp.client.webdriver.Chrome", lambda **_: fake_driver
+    )
 
     client._start_browser()
 
@@ -83,7 +89,9 @@ def test_start_browser_uses_regular_chrome(client: NotebookLMClient, monkeypatch
     assert fake_driver.set_timeout is not None
 
 
-def test_start_browser_uses_undetected_when_available(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_browser_uses_undetected_when_available(
+    client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fake_driver = FakeDriver()
 
     class DummyOptions:
@@ -102,7 +110,9 @@ def test_start_browser_uses_undetected_when_available(client: NotebookLMClient, 
 
 
 @pytest.mark.asyncio
-async def test_start_async_uses_executor(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_start_async_uses_executor(
+    client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fake_driver = FakeDriver()
 
     def fake_start_browser() -> None:
@@ -132,7 +142,9 @@ async def test_start_async_uses_executor(client: NotebookLMClient, monkeypatch: 
     assert client.driver is fake_driver
 
 
-def test_authenticate_sync_sets_flag(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_authenticate_sync_sets_flag(
+    client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     driver = FakeDriver()
     driver.add_elements(("body"), FakeElement("ready"))
     client.driver = driver
@@ -159,7 +171,9 @@ async def test_authenticate_raises_without_driver(client: NotebookLMClient) -> N
         await client.authenticate()
 
 
-def test_send_message_sync_populates_element(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_send_message_sync_populates_element(
+    client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     driver = FakeDriver()
     element = FakeElement()
     driver.find_elements = lambda _by, _selector: [element]
@@ -168,9 +182,10 @@ def test_send_message_sync_populates_element(client: NotebookLMClient, monkeypat
     client._is_authenticated = True
 
     monkeypatch.setattr(
-        "notebooklm_mcp.client.WebDriverWait", lambda *_args, **_kwargs: types.SimpleNamespace(
+        "notebooklm_mcp.client.WebDriverWait",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
             until=lambda predicate: predicate(driver)
-        )
+        ),
     )
 
     client._send_message_sync("hello")
@@ -193,7 +208,9 @@ def test_send_message_sync_raises_when_missing(client: NotebookLMClient) -> None
         client._send_message_sync("hi")
 
 
-def test_wait_for_streaming_response_returns_final(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_streaming_response_returns_final(
+    client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     driver = FakeDriver()
     client.driver = driver
 
@@ -242,7 +259,9 @@ def test_clean_response_text_removes_ui_artifacts(client: NotebookLMClient) -> N
     assert "Useful content" in cleaned
 
 
-def test_navigate_to_notebook_updates_state(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_navigate_to_notebook_updates_state(
+    client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     driver = FakeDriver()
     client.driver = driver
 
@@ -260,7 +279,9 @@ def test_navigate_to_notebook_updates_state(client: NotebookLMClient, monkeypatc
     assert client.current_notebook_id == "target"
 
 
-def test_navigate_to_notebook_timeout(client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_navigate_to_notebook_timeout(
+    client: NotebookLMClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     driver = FakeDriver()
     client.driver = driver
 

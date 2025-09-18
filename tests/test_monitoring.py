@@ -62,9 +62,7 @@ def test_metrics_collector_with_prometheus(monkeypatch: pytest.MonkeyPatch) -> N
         "virtual_memory",
         lambda: SimpleNamespace(percent=50.0, used=2048),
     )
-    monkeypatch.setattr(
-        monitoring.psutil, "cpu_percent", lambda interval=None: 12.5
-    )
+    monkeypatch.setattr(monitoring.psutil, "cpu_percent", lambda interval=None: 12.5)
 
     collector = monitoring.MetricsCollector()
     collector.record_request(success=True, response_time=0.25)
@@ -94,7 +92,9 @@ def test_health_checker_reports_status(monkeypatch: pytest.MonkeyPatch) -> None:
 
     health_checker = monitoring.HealthChecker(client)
 
-    monkeypatch.setattr(monitoring.psutil, "virtual_memory", lambda: SimpleNamespace(percent=10))
+    monkeypatch.setattr(
+        monitoring.psutil, "virtual_memory", lambda: SimpleNamespace(percent=10)
+    )
     monkeypatch.setattr(monitoring.psutil, "cpu_percent", lambda interval=None: 5.0)
 
     result = asyncio.run(health_checker.check_health())
@@ -107,7 +107,9 @@ def test_health_checker_reports_not_started(monkeypatch: pytest.MonkeyPatch) -> 
     client = SimpleNamespace(driver=None, _is_authenticated=False)
     health_checker = monitoring.HealthChecker(client)
 
-    monkeypatch.setattr(monitoring.psutil, "virtual_memory", lambda: SimpleNamespace(percent=10))
+    monkeypatch.setattr(
+        monitoring.psutil, "virtual_memory", lambda: SimpleNamespace(percent=10)
+    )
     monkeypatch.setattr(monitoring.psutil, "cpu_percent", lambda interval=None: 5.0)
 
     result = asyncio.run(health_checker.check_health())
@@ -116,7 +118,9 @@ def test_health_checker_reports_not_started(monkeypatch: pytest.MonkeyPatch) -> 
     assert result.healthy is False
 
 
-def test_health_checker_marks_browser_unhealthy(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_health_checker_marks_browser_unhealthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class BrokenDriver:
         @property
         def current_url(self) -> str:  # pragma: no cover - property for raising below
@@ -125,7 +129,9 @@ def test_health_checker_marks_browser_unhealthy(monkeypatch: pytest.MonkeyPatch)
     client = SimpleNamespace(driver=BrokenDriver(), _is_authenticated=False)
     health_checker = monitoring.HealthChecker(client)
 
-    monkeypatch.setattr(monitoring.psutil, "virtual_memory", lambda: SimpleNamespace(percent=10))
+    monkeypatch.setattr(
+        monitoring.psutil, "virtual_memory", lambda: SimpleNamespace(percent=10)
+    )
     monkeypatch.setattr(monitoring.psutil, "cpu_percent", lambda interval=None: 5.0)
 
     result = asyncio.run(health_checker.check_health())
@@ -185,7 +191,9 @@ def test_setup_monitoring_starts_server(monkeypatch: pytest.MonkeyPatch) -> None
 def test_setup_monitoring_without_prometheus(monkeypatch: pytest.MonkeyPatch) -> None:
     messages: list[str] = []
     monkeypatch.setattr(monitoring, "PROMETHEUS_AVAILABLE", False)
-    monkeypatch.setattr(monitoring.logger, "warning", lambda message: messages.append(message))
+    monkeypatch.setattr(
+        monitoring.logger, "warning", lambda message: messages.append(message)
+    )
 
     monitoring.setup_monitoring(port=1234)
 
@@ -199,7 +207,9 @@ async def test_periodic_health_check_runs_once(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(monitoring.health_checker, "check_health", check)
     monkeypatch.setattr(monitoring.metrics_collector, "update_system_metrics", update)
-    monkeypatch.setattr(monitoring.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(
+        monitoring.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError)
+    )
 
     with pytest.raises(asyncio.CancelledError):
         await monitoring.periodic_health_check(interval=0)
@@ -209,7 +219,9 @@ async def test_periodic_health_check_runs_once(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
-async def test_periodic_health_check_logs_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_periodic_health_check_logs_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     error = RuntimeError("health failed")
     check = AsyncMock(side_effect=error)
     update = MagicMock()
@@ -217,8 +229,12 @@ async def test_periodic_health_check_logs_errors(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(monitoring.health_checker, "check_health", check)
     monkeypatch.setattr(monitoring.metrics_collector, "update_system_metrics", update)
-    monkeypatch.setattr(monitoring.logger, "error", lambda message: log_messages.append(message))
-    monkeypatch.setattr(monitoring.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(
+        monitoring.logger, "error", lambda message: log_messages.append(message)
+    )
+    monkeypatch.setattr(
+        monitoring.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError)
+    )
 
     with pytest.raises(asyncio.CancelledError):
         await monitoring.periodic_health_check(interval=0)

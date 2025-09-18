@@ -90,7 +90,9 @@ def test_server_config_validation_checks(tmp_path: Path) -> None:
         config.validate()
 
 
-def test_setup_profile_creates_and_imports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_setup_profile_creates_and_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "chrome_profile"
 
     # Branch where directory is created
@@ -108,8 +110,9 @@ def test_setup_profile_creates_and_imports(tmp_path: Path, monkeypatch: pytest.M
         copied["args"] = (Path(src_path), Path(dest_path))
 
     monkeypatch.setenv("PYTHONPATH", os.environ.get("PYTHONPATH", ""))
-    with patch("shutil.copytree", side_effect=fake_copytree), patch(
-        "shutil.rmtree", MagicMock()
+    with (
+        patch("shutil.copytree", side_effect=fake_copytree),
+        patch("shutil.rmtree", MagicMock()),
     ):
         cfg = ServerConfig(
             auth=AuthConfig(
@@ -132,20 +135,29 @@ def test_export_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     def fake_copytree(src_path: Path, dest_path: Path) -> None:
         called["paths"] = (Path(src_path), Path(dest_path))
 
-    with patch("shutil.copytree", side_effect=fake_copytree), patch(
-        "shutil.rmtree", MagicMock()
+    with (
+        patch("shutil.copytree", side_effect=fake_copytree),
+        patch("shutil.rmtree", MagicMock()),
     ):
-        cfg = ServerConfig(auth=AuthConfig(profile_dir=str(source), export_profile_to=str(dest)))
+        cfg = ServerConfig(
+            auth=AuthConfig(profile_dir=str(source), export_profile_to=str(dest))
+        )
         cfg.export_profile()
 
     assert called["paths"] == (source, dest)
 
-    cfg = ServerConfig(auth=AuthConfig(profile_dir=str(tmp_path / "missing"), export_profile_to=str(dest)))
+    cfg = ServerConfig(
+        auth=AuthConfig(
+            profile_dir=str(tmp_path / "missing"), export_profile_to=str(dest)
+        )
+    )
     with pytest.raises(ConfigurationError):
         cfg.export_profile()
 
 
-def test_load_config_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_config_precedence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     explicit = tmp_path / "explicit.json"
     explicit.write_text(json.dumps({"headless": True}))
 
