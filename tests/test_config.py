@@ -53,6 +53,19 @@ def test_server_config_to_and_from_dict(tmp_path: Path) -> None:
             assert loaded_dict[key] == value
 
 
+def test_server_config_from_file_errors(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.json"
+
+    with pytest.raises(ConfigurationError):
+        ServerConfig.from_file(str(missing))
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("{bad json")
+
+    with pytest.raises(ConfigurationError):
+        ServerConfig.from_file(str(invalid))
+
+
 def test_server_config_validation_checks(tmp_path: Path) -> None:
     config = ServerConfig(timeout=-1)
     with pytest.raises(ConfigurationError):
@@ -126,6 +139,9 @@ def test_setup_profile_creates_and_imports(
 
 
 def test_export_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # No-op when no export path configured
+    ServerConfig().export_profile()
+
     source = tmp_path / "profile"
     dest = tmp_path / "exported"
     (source / "Default").mkdir(parents=True)
@@ -142,6 +158,7 @@ def test_export_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
         cfg = ServerConfig(
             auth=AuthConfig(profile_dir=str(source), export_profile_to=str(dest))
         )
+        dest.mkdir()
         cfg.export_profile()
 
     assert called["paths"] == (source, dest)
@@ -169,6 +186,11 @@ def test_load_config_precedence(
         assert cfg.headless is True
 
         cfg = load_config(str(default))
+        assert cfg.headless is False
+
+    monkeypatch.chdir(tmp_path)
+    with patch("os.path.exists", side_effect=lambda p: Path(p).exists()):
+        cfg = load_config(None)
         assert cfg.headless is False
 
     # When files do not exist fall back to environment
