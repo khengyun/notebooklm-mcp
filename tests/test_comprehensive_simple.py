@@ -9,10 +9,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
-from selenium.common.exceptions import TimeoutException
-
 import pytest
 from click.testing import CliRunner
+from selenium.common.exceptions import TimeoutException
 
 import notebooklm_mcp.cli as cli_module
 from notebooklm_mcp.client import NotebookLMClient
@@ -21,8 +20,8 @@ from notebooklm_mcp.exceptions import ChatError, NavigationError, NotebookLMErro
 from notebooklm_mcp.monitoring import (
     HealthChecker,
     MetricsCollector,
-    request_timer,
     periodic_health_check,
+    request_timer,
     setup_logging,
     setup_monitoring,
 )
@@ -31,9 +30,9 @@ from notebooklm_mcp.server import (
     GetResponseRequest,
     NavigateRequest,
     NotebookLMFastMCP,
-    create_fastmcp_server,
     SendMessageRequest,
     SetNotebookRequest,
+    create_fastmcp_server,
 )
 
 
