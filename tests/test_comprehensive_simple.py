@@ -476,6 +476,19 @@ def patch_fastmcp(monkeypatch):
     monkeypatch.setattr(server_module, "FastMCP", DummyFastMCP)
 
 
+@pytest.fixture(autouse=True)
+def patch_monitoring(monkeypatch):
+    async def fake_periodic(interval: int) -> None:
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(server_module, "setup_monitoring", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server_module,
+        "periodic_health_check",
+        lambda interval: fake_periodic(interval),
+    )
+
+
 @pytest.fixture
 def server(monkeypatch):
     monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
@@ -533,6 +546,7 @@ def test_server_default_notebook_tools(server):
 def test_server_start_and_stop(monkeypatch):
     monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
     instance = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    instance.config.allow_remote_access = True
 
     asyncio.run(instance.start(transport="http", host="0.0.0.0", port=9000))
     assert instance.app.run_calls[-1] == {
@@ -541,8 +555,10 @@ def test_server_start_and_stop(monkeypatch):
         "port": 9000,
     }
 
+    started_client = instance.client
     asyncio.run(instance.stop())
-    assert instance.client.closed is True
+    assert started_client.closed is True
+    assert instance.client is None
 
 
 def test_server_start_error(monkeypatch):

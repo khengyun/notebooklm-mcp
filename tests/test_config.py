@@ -17,9 +17,19 @@ def test_server_config_round_trip(tmp_path):
         default_notebook_id="abc",
         server_name="custom",
         stdio_mode=False,
+        max_concurrent_requests=4,
+        enable_metrics=False,
+        metrics_port=9200,
+        enable_health_checks=False,
+        health_check_interval=15,
         streaming_timeout=30,
         response_stability_checks=2,
         retry_attempts=1,
+        allow_remote_access=True,
+        require_api_key=True,
+        api_keys=["token-1", "token-2"],
+        api_key_header="X-Notebook-Key",
+        allow_bearer_tokens=False,
         auth=AuthConfig(
             cookies_path="cookies.json",
             profile_dir=str(profile_dir),
@@ -39,6 +49,16 @@ def test_server_config_round_trip(tmp_path):
     assert restored.server_name == "custom"
     assert restored.auth.profile_dir == str(profile_dir)
     assert restored.auth.use_persistent_session is False
+    assert restored.max_concurrent_requests == 4
+    assert restored.enable_metrics is False
+    assert restored.metrics_port == 9200
+    assert restored.enable_health_checks is False
+    assert restored.health_check_interval == 15
+    assert restored.allow_remote_access is True
+    assert restored.require_api_key is True
+    assert restored.api_keys == ["token-1", "token-2"]
+    assert restored.api_key_header == "X-Notebook-Key"
+    assert restored.allow_bearer_tokens is False
 
 
 @pytest.mark.parametrize(
@@ -51,11 +71,26 @@ def test_server_config_round_trip(tmp_path):
             "Response stability checks must be positive",
         ),
         ({"retry_attempts": -1}, "Retry attempts cannot be negative"),
+        (
+            {"max_concurrent_requests": 0},
+            "Max concurrent requests must be greater than zero",
+        ),
+        ({"metrics_port": 0}, "Metrics port must be positive"),
+        (
+            {"health_check_interval": 0},
+            "Health check interval must be positive",
+        ),
+        (
+            {"require_api_key": True},
+            "API key authentication enabled but no API keys were provided",
+        ),
     ],
 )
 def test_server_config_validate_errors(tmp_path, overrides, expected):
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
     base = {
-        "auth": AuthConfig(profile_dir=str(tmp_path / "profiles" / "a")),
+        "auth": AuthConfig(profile_dir=str(profiles_dir / "a")),
     }
     config = ServerConfig(**base, **overrides)
 
@@ -160,3 +195,20 @@ def test_load_config_falls_back_to_env(tmp_path, monkeypatch):
     assert config.timeout == 42
     assert config.default_notebook_id == "env-id"
     assert config.auth.profile_dir == str(tmp_path / "profiles")
+
+
+def test_server_config_from_env_security(monkeypatch, tmp_path):
+    profile_root = tmp_path / "profiles"
+    profile_root.mkdir()
+    monkeypatch.setenv("NOTEBOOKLM_PROFILE_DIR", str(profile_root))
+    monkeypatch.setenv("NOTEBOOKLM_REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("NOTEBOOKLM_API_KEYS", "one,two, ,three")
+    monkeypatch.setenv("NOTEBOOKLM_API_KEY_HEADER", "X-Test-Key")
+    monkeypatch.setenv("NOTEBOOKLM_ALLOW_BEARER_TOKENS", "false")
+
+    config = ServerConfig.from_env()
+
+    assert config.require_api_key is True
+    assert config.api_keys == ["one", "two", "three"]
+    assert config.api_key_header == "X-Test-Key"
+    assert config.allow_bearer_tokens is False

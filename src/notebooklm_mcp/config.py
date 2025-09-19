@@ -42,14 +42,41 @@ class ServerConfig:
     # MCP settings
     server_name: str = "notebooklm-mcp"
     stdio_mode: bool = True
+    max_concurrent_requests: int = 8
+
+    # Observability
+    enable_metrics: bool = True
+    metrics_port: int = 9100
+    enable_health_checks: bool = True
+    health_check_interval: int = 30
 
     # Authentication
     auth: AuthConfig = field(default_factory=AuthConfig)
+    require_api_key: bool = False
+    api_keys: list[str] = field(default_factory=list)
+    api_key_header: str = "x-api-key"
+    allow_bearer_tokens: bool = True
 
     # Advanced settings
     streaming_timeout: int = 60
     response_stability_checks: int = 3
     retry_attempts: int = 3
+    allow_remote_access: bool = False
+
+    def __post_init__(self) -> None:
+        """Normalise API key configuration"""
+
+        cleaned_keys: list[str] = []
+        for key in self.api_keys:
+            if key is None:
+                continue
+            stripped = key.strip()
+            if stripped:
+                cleaned_keys.append(stripped)
+        self.api_keys = cleaned_keys
+
+        header = (self.api_key_header or "x-api-key").strip()
+        self.api_key_header = header or "x-api-key"
 
     @classmethod
     def from_file(cls, config_path: str) -> "ServerConfig":
@@ -88,6 +115,34 @@ class ServerConfig:
                 ).lower()
                 == "true",
             ),
+            max_concurrent_requests=int(os.getenv("NOTEBOOKLM_MAX_CONCURRENCY", "8")),
+            enable_metrics=os.getenv("NOTEBOOKLM_ENABLE_METRICS", "true").lower()
+            == "true",
+            metrics_port=int(os.getenv("NOTEBOOKLM_METRICS_PORT", "9100")),
+            enable_health_checks=os.getenv(
+                "NOTEBOOKLM_ENABLE_HEALTH_CHECKS", "true"
+            ).lower()
+            == "true",
+            health_check_interval=int(
+                os.getenv("NOTEBOOKLM_HEALTH_CHECK_INTERVAL", "30")
+            ),
+            allow_remote_access=os.getenv(
+                "NOTEBOOKLM_ALLOW_REMOTE_ACCESS", "false"
+            ).lower()
+            == "true",
+            require_api_key=os.getenv("NOTEBOOKLM_REQUIRE_API_KEY", "false").lower()
+            == "true",
+            api_keys=[
+                key.strip()
+                for key in os.getenv("NOTEBOOKLM_API_KEYS", "").split(",")
+                if key.strip()
+            ],
+            api_key_header=os.getenv("NOTEBOOKLM_API_KEY_HEADER", "x-api-key").strip()
+            or "x-api-key",
+            allow_bearer_tokens=os.getenv(
+                "NOTEBOOKLM_ALLOW_BEARER_TOKENS", "true"
+            ).lower()
+            == "true",
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -126,6 +181,17 @@ class ServerConfig:
         if self.retry_attempts < 0:
             raise ConfigurationError("Retry attempts cannot be negative")
 
+        if self.max_concurrent_requests <= 0:
+            raise ConfigurationError(
+                "Max concurrent requests must be greater than zero"
+            )
+
+        if self.metrics_port <= 0:
+            raise ConfigurationError("Metrics port must be positive")
+
+        if self.health_check_interval <= 0:
+            raise ConfigurationError("Health check interval must be positive")
+
         if self.auth.profile_dir and not Path(self.auth.profile_dir).parent.exists():
             raise ConfigurationError(
                 f"Profile directory parent does not exist: {self.auth.profile_dir}"
@@ -140,6 +206,14 @@ class ServerConfig:
             raise ConfigurationError(
                 f"Import profile path does not exist: {self.auth.import_profile_from}"
             )
+
+        if self.require_api_key and not self.api_keys:
+            raise ConfigurationError(
+                "API key authentication enabled but no API keys were provided"
+            )
+
+        if self.require_api_key and not self.api_key_header:
+            raise ConfigurationError("API key header must be specified when required")
 
     def setup_profile(self) -> None:
         """Setup Chrome profile based on configuration"""

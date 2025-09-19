@@ -16,6 +16,7 @@ from rich.table import Table
 
 from .client import NotebookLMClient
 from .config import AuthConfig, ServerConfig, load_config
+from .monitoring import setup_logging
 from .exceptions import ConfigurationError
 from .server import NotebookLMFastMCP
 
@@ -51,9 +52,19 @@ def create_default_config(
         "base_url": "https://notebooklm.google.com",
         "server_name": "notebooklm-mcp",
         "stdio_mode": True,
+        "max_concurrent_requests": 8,
+        "enable_metrics": True,
+        "metrics_port": 9100,
+        "enable_health_checks": True,
+        "health_check_interval": 30,
         "streaming_timeout": 60,
         "response_stability_checks": 3,
         "retry_attempts": 3,
+        "allow_remote_access": False,
+        "require_api_key": False,
+        "api_keys": [],
+        "api_key_header": "x-api-key",
+        "allow_bearer_tokens": True,
         "auth": {
             "cookies_path": None,
             "profile_dir": "./chrome_profile_notebooklm",
@@ -215,6 +226,31 @@ def init(notebook_url: str, config_path: str, headless: bool) -> None:
     default="stdio",
     help="Transport protocol (default: stdio)",
 )
+@click.option(
+    "--allow-remote",
+    is_flag=True,
+    help="Allow HTTP/SSE server to listen on non-local addresses",
+)
+@click.option(
+    "--require-api-key/--no-require-api-key",
+    default=None,
+    help="Require API key authentication for HTTP/SSE transports",
+)
+@click.option(
+    "--api-key",
+    "api_keys",
+    multiple=True,
+    help="Accepted API key for HTTP/SSE transports (may be repeated)",
+)
+@click.option(
+    "--api-key-header",
+    help="HTTP header name used for API keys (default: x-api-key)",
+)
+@click.option(
+    "--disable-bearer-tokens",
+    is_flag=True,
+    help="Disable Authorization: Bearer token support",
+)
 @click.pass_context
 def server(
     ctx: click.Context,
@@ -224,6 +260,11 @@ def server(
     host: str,
     root_dir: Optional[str],
     transport: str,
+    allow_remote: bool,
+    require_api_key: Optional[bool],
+    api_keys: tuple[str, ...],
+    api_key_header: Optional[str],
+    disable_bearer_tokens: bool,
 ) -> None:
     """Start the FastMCP v2 NotebookLM server"""
     import os
@@ -247,6 +288,15 @@ def server(
     if headless:
         config.headless = True
 
+    if api_keys:
+        config.api_keys = [key.strip() for key in api_keys if key.strip()]
+    if require_api_key is not None:
+        config.require_api_key = require_api_key
+    if api_key_header:
+        config.api_key_header = api_key_header
+    if disable_bearer_tokens:
+        config.allow_bearer_tokens = False
+
     console.print(
         Panel.fit(
             "[bold blue]Starting NotebookLM FastMCP v2 Server[/bold blue]\n"
@@ -267,8 +317,19 @@ def server(
     console.print(f"[dim]📁 Set working directory to: {working_dir}[/dim]")
 
     try:
+        config.validate()
+    except ConfigurationError as exc:
+        console.print(f"[red]Configuration error: {exc}[/red]")
+        sys.exit(1)
+
+    try:
+        setup_logging(debug=config.debug)
+
         # Use FastMCP v2 implementation only
         server = NotebookLMFastMCP(config)
+
+        if allow_remote:
+            config.allow_remote_access = True
 
         if transport == "http":
             console.print(

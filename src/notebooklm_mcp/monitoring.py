@@ -268,9 +268,12 @@ async def periodic_health_check(interval: int = 30) -> None:
 def setup_logging(debug: bool = False) -> None:
     """Setup structured logging"""
     import sys
+    from pathlib import Path
 
     # Remove default handler
     logger.remove()
+
+    Path("logs").mkdir(parents=True, exist_ok=True)
 
     # Add structured logging
     log_format = (
