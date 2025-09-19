@@ -16,9 +16,19 @@ def _write_config(path: Path, **overrides) -> None:
         "base_url": "https://notebooklm.google.com",
         "server_name": "notebooklm-mcp",
         "stdio_mode": True,
+        "max_concurrent_requests": 8,
+        "enable_metrics": True,
+        "metrics_port": 9100,
+        "enable_health_checks": True,
+        "health_check_interval": 30,
         "streaming_timeout": 45,
         "response_stability_checks": 2,
         "retry_attempts": 1,
+        "allow_remote_access": False,
+        "require_api_key": False,
+        "api_keys": [],
+        "api_key_header": "x-api-key",
+        "allow_bearer_tokens": True,
         "auth": {
             "cookies_path": None,
             "profile_dir": "./chrome_profile_notebooklm",
@@ -39,6 +49,26 @@ def test_server_config_from_file_round_trip(tmp_path):
     assert config.default_notebook_id == "file-value"
     assert config.timeout == 90
     assert config.auth.profile_dir == "./chrome_profile_notebooklm"
+    assert config.api_keys == []
+    assert config.require_api_key is False
+
+
+def test_server_config_file_security_overrides(tmp_path):
+    config_path = tmp_path / "secure.json"
+    _write_config(
+        config_path,
+        require_api_key=True,
+        api_keys=["primary"],
+        api_key_header="X-Notebook-Key",
+        allow_bearer_tokens=False,
+    )
+
+    config = ServerConfig.from_file(str(config_path))
+
+    assert config.require_api_key is True
+    assert config.api_keys == ["primary"]
+    assert config.api_key_header == "X-Notebook-Key"
+    assert config.allow_bearer_tokens is False
 
 
 def test_server_config_from_file_errors(tmp_path):

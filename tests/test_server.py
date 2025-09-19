@@ -1,8 +1,10 @@
 import json
+import asyncio
 import sys
 from types import MethodType, SimpleNamespace
 
 import pytest
+from starlette.middleware import Middleware
 
 from notebooklm_mcp import server as server_module
 from notebooklm_mcp.config import ServerConfig
@@ -57,6 +59,26 @@ def patch_fastmcp(monkeypatch):
     monkeypatch.setattr(server_module, "FastMCP", DummyFastMCP)
 
 
+@pytest.fixture(autouse=True)
+def monitoring_spy(monkeypatch):
+    calls: dict[str, list[int]] = {"setup": []}
+
+    async def fake_periodic(interval: int) -> None:
+        await asyncio.sleep(0)
+
+    def fake_setup(port: int) -> None:
+        calls.setdefault("setup", []).append(port)
+
+    monkeypatch.setattr(server_module, "setup_monitoring", fake_setup)
+    monkeypatch.setattr(
+        server_module,
+        "periodic_health_check",
+        lambda interval: fake_periodic(interval),
+    )
+
+    return calls
+
+
 def test_notebooklmfastmcp_registers_tools(monkeypatch):
     monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
     config = ServerConfig(default_notebook_id="abc")
@@ -109,9 +131,10 @@ async def test_ensure_client_errors_propagate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_uses_transport(monkeypatch):
+async def test_start_uses_transport(monkeypatch, monitoring_spy):
     monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    server.config.allow_remote_access = True
     await server.start(transport="http", host="0.0.0.0", port=9000)
 
     assert server.app.run_calls[-1] == {
@@ -119,6 +142,84 @@ async def test_start_uses_transport(monkeypatch):
         "host": "0.0.0.0",
         "port": 9000,
     }
+    assert monitoring_spy["setup"] == [server.config.metrics_port]
+
+
+@pytest.mark.asyncio
+async def test_start_http_adds_api_key_middleware(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    config = ServerConfig(default_notebook_id="abc")
+    config.allow_remote_access = True
+    config.require_api_key = True
+    config.api_keys = ["alpha", "beta"]
+    server = server_module.NotebookLMFastMCP(config)
+
+    await server.start(transport="http", host="0.0.0.0", port=9050)
+
+    run_call = server.app.run_calls[-1]
+    assert run_call["transport"] == "http"
+    middleware_stack = run_call.get("middleware")
+    assert isinstance(middleware_stack, list)
+    assert len(middleware_stack) == 1
+    middleware = middleware_stack[0]
+    assert isinstance(middleware, Middleware)
+    assert middleware.cls.__name__ == "APIKeyMiddleware"
+    assert middleware.kwargs["api_keys"] == {"alpha", "beta"}
+    assert middleware.kwargs["header"] == config.api_key_header
+
+
+@pytest.mark.asyncio
+async def test_start_http_remote_requires_flag(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+
+    with pytest.raises(NotebookLMError, match="Remote access is disabled"):
+        await server.start(transport="http", host="0.0.0.0", port=9100)
+
+
+@pytest.mark.asyncio
+async def test_start_remote_without_api_key_warns(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    warnings: list[str] = []
+
+    def record_warning(message, *args):
+        warnings.append(message % args if args else message)
+
+    def record_info(*_args, **_kwargs):
+        return None
+
+    def record_error(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        server_module,
+        "logger",
+        SimpleNamespace(
+            info=record_info,
+            warning=record_warning,
+            error=record_error,
+        ),
+    )
+
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    server.config.allow_remote_access = True
+
+    await server.start(transport="http", host="0.0.0.0", port=9150)
+
+    assert any("API key protection" in message for message in warnings)
+
+
+@pytest.mark.asyncio
+async def test_start_without_metrics(monkeypatch, monitoring_spy):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    config = ServerConfig(default_notebook_id="abc")
+    config.allow_remote_access = True
+    config.enable_metrics = False
+    server = server_module.NotebookLMFastMCP(config)
+
+    await server.start(transport="http", host="0.0.0.0", port=9101)
+
+    assert monitoring_spy["setup"] == []
 
 
 @pytest.mark.asyncio
@@ -139,9 +240,11 @@ async def test_stop_closes_client(monkeypatch):
     monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     await server._ensure_client()
+    dummy = server.client
 
     await server.stop()
-    assert server.client.closed is True
+    assert dummy.closed is True
+    assert server.client is None
 
 
 @pytest.mark.asyncio
@@ -337,6 +440,7 @@ async def test_navigate_to_notebook_tool_error(monkeypatch):
 async def test_start_sse_transport(monkeypatch):
     monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    server.config.allow_remote_access = True
     await server.start(transport="sse", host="0.0.0.0", port=8080)
 
     assert server.app.run_calls[-1] == {

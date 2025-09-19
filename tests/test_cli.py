@@ -15,8 +15,10 @@ def make_config_file(tmp_path: Path) -> Path:
 
 def setup_cli(monkeypatch, tmp_path):
     config = ServerConfig(default_notebook_id="abc")
+    config.auth.profile_dir = str(tmp_path / "profile")
     monkeypatch.setattr(cli_module, "load_config", lambda path: config)
     monkeypatch.setattr(cli_module.console, "print", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli_module, "setup_logging", lambda *args, **kwargs: None)
     return config
 
 
@@ -72,6 +74,98 @@ def test_server_command_invokes_start(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert calls["config"] is config
     assert calls["params"] == ("stdio", "127.0.0.1", 8000)
+
+
+def test_server_command_allow_remote(monkeypatch, tmp_path):
+    config = setup_cli(monkeypatch, tmp_path)
+    config_path = make_config_file(tmp_path)
+
+    class DummyServer:
+        def __init__(self, cfg):
+            self.config = cfg
+
+        async def start(self, transport="stdio", host="127.0.0.1", port=8000):
+            return None
+
+    monkeypatch.setattr(cli_module, "NotebookLMFastMCP", DummyServer)
+    monkeypatch.setattr(cli_module.asyncio, "run", run_asyncio)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_module.cli,
+        [
+            "--config",
+            str(config_path),
+            "server",
+            "--root-dir",
+            str(tmp_path),
+            "--allow-remote",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert config.allow_remote_access is True
+
+
+def test_server_command_security_flags(monkeypatch, tmp_path):
+    config = setup_cli(monkeypatch, tmp_path)
+    config_path = make_config_file(tmp_path)
+
+    class DummyServer:
+        def __init__(self, cfg):
+            self.config = cfg
+
+        async def start(self, transport="stdio", host="127.0.0.1", port=8000):
+            return None
+
+    monkeypatch.setattr(cli_module, "NotebookLMFastMCP", DummyServer)
+    monkeypatch.setattr(cli_module.asyncio, "run", run_asyncio)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_module.cli,
+        [
+            "--config",
+            str(config_path),
+            "server",
+            "--root-dir",
+            str(tmp_path),
+            "--require-api-key",
+            "--api-key",
+            "secret",  # first key
+            "--api-key",
+            "second",  # second key
+            "--api-key-header",
+            "X-Test-Key",
+            "--disable-bearer-tokens",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert config.require_api_key is True
+    assert config.api_keys == ["secret", "second"]
+    assert config.api_key_header == "X-Test-Key"
+    assert config.allow_bearer_tokens is False
+
+
+def test_server_command_requires_api_key_values(monkeypatch, tmp_path):
+    setup_cli(monkeypatch, tmp_path)
+    config_path = make_config_file(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_module.cli,
+        [
+            "--config",
+            str(config_path),
+            "server",
+            "--root-dir",
+            str(tmp_path),
+            "--require-api-key",
+        ],
+    )
+
+    assert result.exit_code != 0
 
 
 def test_chat_command_sends_message(monkeypatch, tmp_path):
