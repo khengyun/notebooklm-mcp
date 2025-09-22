@@ -4,10 +4,10 @@ Command-line interface for NotebookLM MCP Server
 
 import asyncio
 import json
+import pathlib
 import re
 import sys
-from pathlib import Path
-from typing import Optional
+import typing
 
 import click
 from rich.console import Console
@@ -97,7 +97,7 @@ def update_config_to_headless(config_path: str = "notebooklm-config.json") -> No
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging")
 @click.pass_context
-def cli(ctx: click.Context, config: Optional[str], debug: bool) -> None:
+def cli(ctx: click.Context, config: typing.Optional[str], debug: bool) -> None:
     """NotebookLM MCP Server - Professional automation for Google NotebookLM"""
     ctx.ensure_object(dict)
 
@@ -149,7 +149,7 @@ def init(notebook_url: str, config_path: str, headless: bool) -> None:
         create_default_config(notebook_id, config_path)
 
         # Create profile directory
-        profile_dir = Path("./chrome_profile_notebooklm")
+        profile_dir = pathlib.Path("./chrome_profile_notebooklm")
         profile_dir.mkdir(exist_ok=True)
         console.print(
             f"✅ Created profile directory: [bold green]{profile_dir}[/bold green]"
@@ -218,24 +218,23 @@ def init(notebook_url: str, config_path: str, headless: bool) -> None:
 @click.pass_context
 def server(
     ctx: click.Context,
-    notebook: Optional[str],
+    notebook: typing.Optional[str],
     headless: bool,
     port: int,
     host: str,
-    root_dir: Optional[str],
+    root_dir: typing.Optional[str],
     transport: str,
 ) -> None:
     """Start the FastMCP v2 NotebookLM server"""
     import os
-    from pathlib import Path
 
     config: ServerConfig = ctx.obj["config"]
 
     # Auto-detect current working directory as root
     if root_dir:
-        working_dir = Path(root_dir).resolve()
+        working_dir = pathlib.Path(root_dir).resolve()
     else:
-        working_dir = Path.cwd()
+        working_dir = pathlib.Path.cwd()
 
     # Ensure root directory exists
     if not working_dir.exists():
@@ -314,7 +313,10 @@ def server(
 @click.option("--headless", is_flag=True, help="Run in headless mode")
 @click.pass_context
 def chat(
-    ctx: click.Context, notebook: Optional[str], message: Optional[str], headless: bool
+    ctx: click.Context,
+    notebook: typing.Optional[str],
+    message: typing.Optional[str],
+    headless: bool,
 ) -> None:
     """Interactive chat with NotebookLM"""
     config: ServerConfig = ctx.obj["config"]
@@ -399,7 +401,7 @@ def quick_setup(
     ctx: click.Context,
     config: str,
     notebook: str,
-    profile: Optional[str],
+    profile: typing.Optional[str],
     headless: bool,
     setup_only: bool,
 ) -> None:
@@ -559,11 +561,10 @@ def import_profile(ctx: click.Context, from_profile: str, to_profile: str) -> No
     """Import existing Chrome profile"""
 
     try:
-        from pathlib import Path
         from shutil import copytree, rmtree
 
-        source = Path(from_profile)
-        dest = Path(to_profile)
+        source = pathlib.Path(from_profile)
+        dest = pathlib.Path(to_profile)
 
         if not source.exists():
             raise ConfigurationError(f"Source profile not found: {source}")
@@ -597,18 +598,19 @@ def import_profile(ctx: click.Context, from_profile: str, to_profile: str) -> No
 @click.option("--profile", "-p", help="Profile path to export from (default: current)")
 @click.option("--to", "-t", required=True, help="Export destination path")
 @click.pass_context
-def export_profile(ctx: click.Context, profile: Optional[str], to: str) -> None:
+def export_profile(
+    ctx: click.Context, profile: typing.Optional[str], to: str
+) -> None:
     """Export Chrome profile for sharing"""
     config: ServerConfig = ctx.obj["config"]
 
     source_profile = profile or config.auth.profile_dir
 
     try:
-        from pathlib import Path
         from shutil import copytree, rmtree
 
-        source = Path(source_profile)
-        dest = Path(to)
+        source = pathlib.Path(source_profile)
+        dest = pathlib.Path(to)
 
         if not source.exists():
             raise ConfigurationError(f"Source profile not found: {source}")
