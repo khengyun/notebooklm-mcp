@@ -5,13 +5,14 @@ Enhanced with improved response parsing for cleaner AI responses.
 """
 
 import asyncio
+import platform
 import time
 from pathlib import Path
 from typing import Optional
 
 from loguru import logger
 from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -43,6 +44,8 @@ class NotebookLMClient:
 
     def _start_browser(self) -> None:
         """Initialize browser with proper configuration"""
+        is_windows = platform.system() == "Windows"
+        
         if USE_UNDETECTED:
             logger.info("Using undetected-chromedriver for better compatibility")
 
@@ -58,10 +61,56 @@ class NotebookLMClient:
             options.add_argument("--no-default-browser-check")
             options.add_argument("--disable-extensions")
 
+            # Windows-specific handling for headless mode
             if self.config.headless:
-                options.add_argument("--headless=new")
+                if is_windows:
+                    # Use different headless approach on Windows for better compatibility
+                    logger.warning(
+                        "Windows detected: using alternative headless configuration for better compatibility"
+                    )
+                    # Add window size to minimize UI while not fully headless
+                    options.add_argument("--window-size=1920,1080")
+                    options.add_argument("--start-minimized")
+                    # Try headless mode but with additional stability flags
+                    options.add_argument("--headless=new")
+                    options.add_argument("--disable-gpu")
+                    options.add_argument("--disable-dev-shm-usage")
+                    options.add_argument("--no-sandbox")
+                else:
+                    # Standard headless on Linux/Mac
+                    options.add_argument("--headless=new")
 
-            self.driver = uc.Chrome(options=options, version_main=None)
+            try:
+                self.driver = uc.Chrome(options=options, version_main=None)
+            except WebDriverException as e:
+                if is_windows and self.config.headless:
+                    # Fallback: try without headless on Windows
+                    logger.warning(
+                        f"Failed to start Chrome in headless mode on Windows: {e}"
+                    )
+                    logger.info("Attempting fallback: starting Chrome in non-headless mode")
+                    
+                    # Remove headless arguments
+                    options = uc.ChromeOptions()
+                    if self.config.auth.use_persistent_session:
+                        options.add_argument(f"--user-data-dir={profile_path}")
+                    options.add_argument("--no-first-run")
+                    options.add_argument("--no-default-browser-check")
+                    options.add_argument("--disable-extensions")
+                    # Minimize window instead
+                    options.add_argument("--window-size=1920,1080")
+                    options.add_argument("--start-minimized")
+                    
+                    try:
+                        self.driver = uc.Chrome(options=options, version_main=None)
+                        logger.info(
+                            "✅ Successfully started Chrome in minimized mode (Windows fallback)"
+                        )
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback also failed: {fallback_error}")
+                        raise
+                else:
+                    raise
         else:
             logger.warning(
                 "undetected-chromedriver not available, using regular Selenium"

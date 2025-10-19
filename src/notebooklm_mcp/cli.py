@@ -4,6 +4,7 @@ Command-line interface for NotebookLM MCP Server
 
 import asyncio
 import json
+import platform
 import re
 import sys
 from pathlib import Path
@@ -69,8 +70,14 @@ def create_default_config(
 
 
 def update_config_to_headless(config_path: str = "notebooklm-config.json") -> None:
-    """Update config file to set headless=true after successful setup"""
+    """Update config file to set headless=true after successful setup
+    
+    Note: On Windows, headless mode may have compatibility issues.
+    The browser will automatically fall back to minimized mode if needed.
+    """
     try:
+        is_windows = platform.system() == "Windows"
+        
         # Read current config
         with open(config_path, "r") as f:
             config = json.load(f)
@@ -82,9 +89,15 @@ def update_config_to_headless(config_path: str = "notebooklm-config.json") -> No
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
 
-        console.print(
-            "✅ Updated config: [bold yellow]headless=true[/bold yellow] for optimal performance"
-        )
+        if is_windows:
+            console.print(
+                "✅ Updated config: [bold yellow]headless=true[/bold yellow]\n"
+                "[dim]ℹ️  Note: On Windows, the browser may start in minimized mode instead of fully headless for compatibility[/dim]"
+            )
+        else:
+            console.print(
+                "✅ Updated config: [bold yellow]headless=true[/bold yellow] for optimal performance"
+            )
 
     except Exception as e:
         console.print(f"⚠️  Failed to update config to headless mode: {e}")
@@ -135,12 +148,18 @@ def init(notebook_url: str, config_path: str, headless: bool) -> None:
     try:
         # Extract notebook ID from URL
         notebook_id = extract_notebook_id(notebook_url)
+        is_windows = platform.system() == "Windows"
 
         console.print(
             Panel.fit(
                 f"[bold blue]🚀 Initializing NotebookLM MCP Server[/bold blue]\n"
                 f"Notebook ID: [green]{notebook_id}[/green]\n"
-                f"Config File: [yellow]{config_path}[/yellow]",
+                f"Config File: [yellow]{config_path}[/yellow]"
+                + (
+                    f"\n[yellow]⚠️  Windows detected: headless mode may have compatibility issues[/yellow]"
+                    if is_windows
+                    else ""
+                ),
                 title="Setup Starting",
             )
         )
@@ -284,10 +303,44 @@ def server(
     except KeyboardInterrupt:
         console.print("\n[yellow]Server stopped by user[/yellow]")
     except Exception as e:
+        is_windows = platform.system() == "Windows"
+        error_str = str(e)
         console.print(f"[red]Server error: {e}[/red]")
 
+        # Better Chrome connection error handling for Windows
+        if "cannot connect to chrome" in error_str.lower() or "chrome not reachable" in error_str.lower():
+            if is_windows and config.headless:
+                console.print(
+                    Panel.fit(
+                        "[yellow]🪟 Windows Chrome Connection Issue[/yellow]\n\n"
+                        "The server failed to connect to Chrome in headless mode on Windows.\n"
+                        "This is a known compatibility issue with undetected-chromedriver.\n\n"
+                        "[bold]Quick Fix Options:[/bold]\n"
+                        "1. Disable headless mode in your config file:\n"
+                        f"   Edit [cyan]{ctx.obj.get('config_file', 'notebooklm-config.json')}[/cyan]\n"
+                        '   Set [yellow]"headless": false[/yellow]\n\n'
+                        "2. Use minimized window mode (automatic fallback):\n"
+                        "   The browser will start minimized instead of headless\n\n"
+                        "3. Run on Linux/Mac or WSL for full headless support\n\n"
+                        "[dim]The minimized mode still works well for automation![/dim]",
+                        title="🔧 Windows Compatibility",
+                    )
+                )
+            else:
+                console.print(
+                    Panel.fit(
+                        "[yellow]🌐 Chrome Connection Issue[/yellow]\n\n"
+                        "Failed to connect to Chrome browser.\n\n"
+                        "[bold]Troubleshooting steps:[/bold]\n"
+                        "1. Make sure Chrome is installed\n"
+                        "2. Close any existing Chrome instances\n"
+                        "3. Delete and recreate the chrome_profile_notebooklm folder\n"
+                        "4. Run init again to set up a fresh profile",
+                        title="🔧 Browser Connection",
+                    )
+                )
         # Better authentication error handling
-        if "Authentication required" in str(e):
+        elif "Authentication required" in error_str:
             console.print(
                 Panel.fit(
                     "[yellow]🔐 Authentication Required[/yellow]\n\n"
