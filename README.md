@@ -390,6 +390,44 @@ task lint
 - **[MCP Specification](https://spec.modelcontextprotocol.io/)** - Official MCP spec
 - **[NotebookLM](https://notebooklm.google.com/)** - Google's AI notebook
 
+## 🔧 Troubleshooting
+
+### Windows: Chrome Connection Error
+
+If you see `"cannot connect to chrome"` on Windows:
+
+**Quick Fix:** Edit `notebooklm-config.json` and set `"headless": false`
+
+```json
+{
+  "headless": false,  // Change from true to false
+  "default_notebook_id": "your-notebook-id"
+}
+```
+
+The browser will open minimized and work perfectly for automation.
+
+**Why?** Windows has compatibility issues with Chrome's headless mode when using anti-detection drivers. See [Windows Compatibility Guide](docs/WINDOWS_QUICK_FIX.md) for details and alternative solutions.
+
+### Other Common Issues
+
+**Profile Corruption:**
+```bash
+# Delete and recreate profile
+rm -rf chrome_profile_notebooklm  # Linux/Mac
+rmdir /s chrome_profile_notebooklm  # Windows
+
+# Re-run init
+notebooklm-mcp init https://notebooklm.google.com/notebook/YOUR_ID
+```
+
+**Authentication Issues:**
+- Make sure you're logged into Google in the browser
+- Try running without `--headless` flag first
+- Check that your notebook ID is correct
+
+For more help, see [Troubleshooting Docs](docs/WINDOWS_COMPATIBILITY.md)
+
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) file for details.
