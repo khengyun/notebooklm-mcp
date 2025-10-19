@@ -71,13 +71,13 @@ def create_default_config(
 
 def update_config_to_headless(config_path: str = "notebooklm-config.json") -> None:
     """Update config file to set headless=true after successful setup
-    
+
     Note: On Windows, headless mode may have compatibility issues.
     The browser will automatically fall back to minimized mode if needed.
     """
     try:
         is_windows = platform.system() == "Windows"
-        
+
         # Read current config
         with open(config_path, "r") as f:
             config = json.load(f)
@@ -156,7 +156,7 @@ def init(notebook_url: str, config_path: str, headless: bool) -> None:
                 f"Notebook ID: [green]{notebook_id}[/green]\n"
                 f"Config File: [yellow]{config_path}[/yellow]"
                 + (
-                    f"\n[yellow]⚠️  Windows detected: headless mode may have compatibility issues[/yellow]"
+                    "\n[yellow]⚠️  Windows detected: headless mode may have compatibility issues[/yellow]"
                     if is_windows
                     else ""
                 ),
@@ -308,7 +308,10 @@ def server(
         console.print(f"[red]Server error: {e}[/red]")
 
         # Better Chrome connection error handling for Windows
-        if "cannot connect to chrome" in error_str.lower() or "chrome not reachable" in error_str.lower():
+        if (
+            "cannot connect to chrome" in error_str.lower()
+            or "chrome not reachable" in error_str.lower()
+        ):
             if is_windows and config.headless:
                 console.print(
                     Panel.fit(

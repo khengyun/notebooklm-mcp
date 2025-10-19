@@ -45,7 +45,7 @@ class NotebookLMClient:
     def _start_browser(self) -> None:
         """Initialize browser with proper configuration"""
         is_windows = platform.system() == "Windows"
-        
+
         if USE_UNDETECTED:
             logger.info("Using undetected-chromedriver for better compatibility")
 
@@ -88,8 +88,10 @@ class NotebookLMClient:
                     logger.warning(
                         f"Failed to start Chrome in headless mode on Windows: {e}"
                     )
-                    logger.info("Attempting fallback: starting Chrome in non-headless mode")
-                    
+                    logger.info(
+                        "Attempting fallback: starting Chrome in non-headless mode"
+                    )
+
                     # Remove headless arguments
                     options = uc.ChromeOptions()
                     if self.config.auth.use_persistent_session:
@@ -100,7 +102,7 @@ class NotebookLMClient:
                     # Minimize window instead
                     options.add_argument("--window-size=1920,1080")
                     options.add_argument("--start-minimized")
-                    
+
                     try:
                         self.driver = uc.Chrome(options=options, version_main=None)
                         logger.info(

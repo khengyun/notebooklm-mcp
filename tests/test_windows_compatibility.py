@@ -1,6 +1,7 @@
 """
 Tests for Windows compatibility handling
 """
+
 import platform
 from unittest.mock import Mock, patch
 
@@ -24,11 +25,11 @@ def test_windows_headless_detection(mock_config):
     """Test that Windows platform is correctly detected"""
     with patch("platform.system") as mock_platform:
         mock_platform.return_value = "Windows"
-        
+
         # Just verify the platform check works
         is_windows = platform.system() == "Windows"
         assert is_windows is True
-        
+
         mock_platform.return_value = "Linux"
         is_windows = platform.system() == "Windows"
         assert is_windows is False
@@ -43,13 +44,13 @@ def test_windows_headless_mode_arguments(mock_uc, mock_config):
         mock_driver = Mock()
         mock_uc.Chrome.return_value = mock_driver
         mock_uc.ChromeOptions.return_value = Mock()
-        
+
         client = NotebookLMClient(mock_config)
-        
+
         # This would normally call _start_browser
         # We can verify the options would be set correctly
         options = mock_uc.ChromeOptions()
-        
+
         # Verify ChromeOptions was called
         assert mock_uc.ChromeOptions.called
 
@@ -64,9 +65,9 @@ def test_non_windows_headless_mode(mock_uc, mock_config):
         mock_uc.Chrome.return_value = mock_driver
         mock_options = Mock()
         mock_uc.ChromeOptions.return_value = mock_options
-        
+
         client = NotebookLMClient(mock_config)
-        
+
         # Verify the client was created
         assert client is not None
         assert client.config.headless is True
@@ -75,7 +76,7 @@ def test_non_windows_headless_mode(mock_uc, mock_config):
 def test_cli_windows_warning_in_init():
     """Test that CLI shows Windows warning during init"""
     from notebooklm_mcp.cli import extract_notebook_id
-    
+
     # Test notebook ID extraction still works
     url = "https://notebooklm.google.com/notebook/4741957b-f358-48fb-a16a-da8d20797bc6"
     notebook_id = extract_notebook_id(url)
@@ -88,24 +89,21 @@ def test_cli_update_config_to_headless_with_platform_message():
     import tempfile
     from pathlib import Path
     from notebooklm_mcp.cli import update_config_to_headless
-    
+
     # Create a temporary config file
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
-        config = {
-            "headless": False,
-            "default_notebook_id": "test-123"
-        }
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
+        config = {"headless": False, "default_notebook_id": "test-123"}
         json.dump(config, f)
         temp_path = f.name
-    
+
     try:
         # Update config
         update_config_to_headless(temp_path)
-        
+
         # Verify it was updated
-        with open(temp_path, 'r') as f:
+        with open(temp_path, "r") as f:
             updated_config = json.load(f)
-        
+
         assert updated_config["headless"] is True
     finally:
         # Clean up
