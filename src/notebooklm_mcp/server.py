@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from .client import NotebookLMClient
 from .config import ServerConfig
-from .exceptions import NotebookLMError
+from .exceptions import AuthenticationError, NotebookLMError
 
 
 # Pydantic models for type-safe tool parameters
@@ -76,7 +76,17 @@ class NotebookLMFastMCP:
             if self.client is None:
                 self.client = NotebookLMClient(self.config)
                 await self.client.start()
-                logger.info("✅ NotebookLM client initialized and authenticated")
+                
+                # Authenticate the client
+                auth_success = await self.client.authenticate()
+                if not auth_success:
+                    logger.warning("⚠️  Authentication incomplete - manual login may be required")
+                    if self.config.headless:
+                        raise AuthenticationError(
+                            "Cannot authenticate in headless mode. Please run with --headless=false first to login."
+                        )
+                else:
+                    logger.info("✅ NotebookLM client initialized and authenticated")
         except Exception as e:
             logger.error(f"Failed to initialize client: {e}")
             raise NotebookLMError(f"Client initialization failed: {e}")
