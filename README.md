@@ -19,9 +19,10 @@ notebooklm-mcp -c notebooklm-config.json server          # MCP server (stdio | h
 notebooklm-mcp -c notebooklm-config.json chat -m "..."   # quick chat from the CLI
 ```
 
-## Tools (16)
+## Tools (18)
 
 - **Chat:** `send_chat_message`, `get_chat_response`, `chat_with_notebook`, `navigate_to_notebook`, `get`/`set_default_notebook`, `healthcheck`
 - **Manage:** `list`/`create`/`rename`/`delete_notebook`, `get_notebook_summary`, `list_sources`, `add_source_url`/`add_source_text`/`delete_source`
+- **Compose:** `copy_source`, `create_notebook_from_sources` (merge sources across notebooks)
 
 MIT License
