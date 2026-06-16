@@ -1,476 +1,362 @@
 """
-Browser automation client for NotebookLM interactions
+Browser automation client for NotebookLM interactions.
 
-Enhanced with improved response parsing for cleaner AI responses.
+Engine: Patchright (undetected Playwright). Chosen over Selenium +
+undetected-chromedriver because it:
+
+* eliminates the chromedriver/Chrome version-matching failure
+  (``SessionNotCreatedException``) — Patchright manages its own driver and
+  drives the installed Chrome via ``channel="chrome"``;
+* patches the ``Runtime.enable`` CDP leak that Google's bot detection keys on;
+* is async-native, so the whole client is real ``async`` instead of Selenium
+  shoved through ``run_in_executor``.
+
+All DOM selectors live in :mod:`notebooklm_mcp.selectors` so UI drift is a
+one-file change.
 """
 
+from __future__ import annotations
+
 import asyncio
-import time
 from pathlib import Path
 from typing import Optional
 
 from loguru import logger
-from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
+from patchright.async_api import (
+    BrowserContext,
+    Locator,
+    Page,
+    Playwright,
+    async_playwright,
+)
+from patchright.async_api import (
+    Error as PlaywrightError,
+)
+from patchright.async_api import (
+    TimeoutError as PlaywrightTimeoutError,
+)
 
-try:
-    import undetected_chromedriver as uc
-
-    USE_UNDETECTED = True
-except ImportError:
-    USE_UNDETECTED = False
-
+from . import selectors as S
 from .config import ServerConfig
 from .exceptions import AuthenticationError, ChatError, NavigationError
 
 
 class NotebookLMClient:
-    """High-level client for NotebookLM automation"""
+    """High-level async client for NotebookLM automation."""
+
+    #: The browser/DOM engine drives chat only; it cannot do UI-independent
+    #: notebook/source management (that requires the RPC engine).
+    supports_management = False
 
     def __init__(self, config: ServerConfig):
         self.config = config
-        self.driver: Optional[webdriver.Chrome] = None
+        self._playwright: Optional[Playwright] = None
+        self.context: Optional[BrowserContext] = None
+        self.page: Optional[Page] = None
         self.current_notebook_id: Optional[str] = config.default_notebook_id
         self._is_authenticated = False
 
+    # Backwards-compatible alias: monitoring.py historically read
+    # ``client.driver``. The Playwright ``Page`` exposes ``.url`` like the old
+    # Selenium driver, so existing health checks keep working.
+    @property
+    def driver(self) -> Optional[Page]:
+        return self.page
+
+    @property
+    def is_authenticated(self) -> bool:
+        return self._is_authenticated
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle
+    # ------------------------------------------------------------------ #
     async def start(self) -> None:
-        """Start browser session"""
-        await asyncio.get_event_loop().run_in_executor(None, self._start_browser)
+        """Launch a persistent, undetected Chrome session.
 
-    def _start_browser(self) -> None:
-        """Initialize browser with proper configuration"""
-        if USE_UNDETECTED:
-            logger.info("Using undetected-chromedriver for better compatibility")
+        Idempotent: calling twice is a no-op while a page is live.
+        """
+        if self.page is not None:
+            return
 
-            # Create persistent profile directory
-            if self.config.auth.use_persistent_session:
-                profile_path = Path(self.config.auth.profile_dir).absolute()
-                profile_path.mkdir(exist_ok=True)
+        profile_path = Path(self.config.auth.profile_dir).expanduser()
+        if self.config.auth.use_persistent_session:
+            profile_path = profile_path.absolute()
+            profile_path.mkdir(parents=True, exist_ok=True)
 
-            options = uc.ChromeOptions()
-            if self.config.auth.use_persistent_session:
-                options.add_argument(f"--user-data-dir={profile_path}")
-            options.add_argument("--no-first-run")
-            options.add_argument("--no-default-browser-check")
-            options.add_argument("--disable-extensions")
+        launch_args = [
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+        ]
 
-            if self.config.headless:
-                options.add_argument("--headless=new")
+        launch_kwargs: dict = {
+            "user_data_dir": (
+                str(profile_path) if self.config.auth.use_persistent_session else ""
+            ),
+            "headless": self.config.headless,
+            "args": launch_args,
+            "no_viewport": True,
+        }
+        # ``channel="chrome"`` uses the real installed Chrome (best stealth and
+        # the configuration proven against NotebookLM). Fall back to Patchright's
+        # bundled Chromium if Chrome isn't present.
+        if self.config.auth.chrome_channel:
+            launch_kwargs["channel"] = self.config.auth.chrome_channel
+        if self.config.chrome_binary:
+            launch_kwargs["executable_path"] = self.config.chrome_binary
 
-            self.driver = uc.Chrome(options=options, version_main=None)
-        else:
-            logger.warning(
-                "undetected-chromedriver not available, using regular Selenium"
-            )
-            # Fallback implementation with regular ChromeDriver
-            self._start_regular_chrome()
+        try:
+            self._playwright = await async_playwright().start()
+            self.context = await self._launch_context(launch_kwargs)
+        except PlaywrightError as exc:
+            # Most common cause: ``channel="chrome"`` requested but no system
+            # Chrome. Retry once with the bundled Chromium.
+            if launch_kwargs.pop("channel", None) is not None:
+                logger.warning(
+                    f"Chrome channel launch failed ({exc}); "
+                    "retrying with bundled Chromium"
+                )
+                self.context = await self._launch_context(launch_kwargs)
+            else:
+                await self._safe_shutdown()
+                raise AuthenticationError(f"Failed to launch browser: {exc}") from exc
 
-        if self.driver is None:
-            raise RuntimeError("Failed to initialize browser driver")
-        self.driver.set_page_load_timeout(self.config.timeout)
+        self.page = (
+            self.context.pages[0]
+            if self.context.pages
+            else await self.context.new_page()
+        )
+        self.page.set_default_timeout(self.config.timeout * 1000)
+        logger.info("Patchright browser session started")
 
-    def _start_regular_chrome(self) -> None:
-        """Fallback Chrome initialization"""
-        opts = ChromeOptions()
-
-        # Anti-detection options
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--disable-gpu")
-        opts.add_argument("--disable-blink-features=AutomationControlled")
-        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-        opts.add_experimental_option("useAutomationExtension", False)
-
-        # User agent
-        opts.add_argument(
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    async def _launch_context(self, launch_kwargs: dict) -> BrowserContext:
+        assert self._playwright is not None
+        return await self._playwright.chromium.launch_persistent_context(
+            **launch_kwargs
         )
 
-        if self.config.headless:
-            opts.add_argument("--headless=new")
+    async def close(self) -> None:
+        """Close the browser session. Idempotent."""
+        await self._safe_shutdown()
+        self._is_authenticated = False
 
-        self.driver = webdriver.Chrome(options=opts)
+    async def _safe_shutdown(self) -> None:
+        for closer in (self._close_context, self._stop_playwright):
+            try:
+                await closer()
+            except Exception as exc:  # pragma: no cover - best-effort cleanup
+                logger.debug(f"Shutdown step failed: {exc}")
+        self.context = None
+        self.page = None
+        self._playwright = None
 
-        # Remove automation indicators
-        self.driver.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
+    async def _close_context(self) -> None:
+        if self.context is not None:
+            await self.context.close()
 
+    async def _stop_playwright(self) -> None:
+        if self._playwright is not None:
+            await self._playwright.stop()
+
+    # ------------------------------------------------------------------ #
+    # Authentication
+    # ------------------------------------------------------------------ #
     async def authenticate(self) -> bool:
-        """Authenticate with NotebookLM"""
-        if not self.driver:
+        """Navigate to the target notebook and detect login state.
+
+        Auth is detected positively: we must be on the NotebookLM host, not
+        bounced to a Google sign-in URL. When a notebook is loaded we also
+        confirm the chat composer is present.
+        """
+        if self.page is None:
             raise AuthenticationError("Browser not started")
-
-        return await asyncio.get_event_loop().run_in_executor(
-            None, self._authenticate_sync
-        )
-
-    def _authenticate_sync(self) -> bool:
-        """Synchronous authentication logic"""
-        if self.driver is None:
-            raise RuntimeError("Browser driver not initialized")
 
         target_url = self.config.base_url
         if self.current_notebook_id:
             target_url = f"{self.config.base_url}/notebook/{self.current_notebook_id}"
 
         logger.info(f"Navigating to: {target_url}")
-        self.driver.get(target_url)
-
         try:
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
+            await self.page.goto(target_url, wait_until="domcontentloaded")
+        except PlaywrightTimeoutError as exc:
+            raise AuthenticationError("Page load timed out") from exc
 
-            current_url = self.driver.current_url
-            logger.debug(f"Current URL after navigation: {current_url}")
+        current_url = self.page.url
+        logger.debug(f"Current URL after navigation: {current_url}")
 
-            # Check if authenticated
-            if "signin" not in current_url and "accounts.google.com" not in current_url:
-                logger.info("✅ Already authenticated via persistent session!")
-                self._is_authenticated = True
-                return True
-            else:
-                logger.warning("❌ Authentication required - need manual login")
-                if not self.config.headless:
-                    logger.info("Browser will stay open for manual authentication")
-                self._is_authenticated = False
-                return False
+        if self._url_is_signed_out(current_url):
+            logger.warning("Authentication required - manual Google login needed")
+            self._is_authenticated = False
+            return False
 
-        except TimeoutException:
-            raise AuthenticationError("Page load timed out during authentication")
+        if S.APP_HOST not in current_url:
+            # Landed somewhere unexpected (interstitial/consent): treat as
+            # not-authenticated rather than risk a false positive.
+            logger.warning(f"Unexpected post-login URL: {current_url}")
+            self._is_authenticated = False
+            return False
 
+        # On the app host and not at a sign-in page → authenticated. If a
+        # notebook is loaded, confirm the composer renders (best-effort).
+        if self.current_notebook_id:
+            composer = await self._find_first(S.CHAT_INPUT, timeout=8000)
+            if composer is None:
+                logger.warning("On app host but chat composer not found yet")
+        logger.info("Authenticated via persistent session")
+        self._is_authenticated = True
+        return True
+
+    @staticmethod
+    def _url_is_signed_out(url: str) -> bool:
+        return any(marker in url for marker in S.SIGNED_OUT_URL_MARKERS)
+
+    # ------------------------------------------------------------------ #
+    # Messaging
+    # ------------------------------------------------------------------ #
     async def send_message(self, message: str) -> None:
-        """Send chat message to NotebookLM"""
-        if not self.driver or not self._is_authenticated:
+        """Type a message into the chat composer and submit it."""
+        if self.page is None or not self._is_authenticated:
             raise ChatError("Not authenticated or browser not ready")
 
-        await asyncio.get_event_loop().run_in_executor(
-            None, self._send_message_sync, message
-        )
+        await self._ensure_on_notebook()
 
-    def _send_message_sync(self, message: str) -> None:
-        """Synchronous message sending"""
-        if self.driver is None:
-            raise RuntimeError("Browser driver not initialized")
-
-        # Ensure we're on the right notebook
-        if self.current_notebook_id:
-            current_url = self.driver.current_url
-            expected_url = f"notebook/{self.current_notebook_id}"
-            if expected_url not in current_url:
-                self._navigate_to_notebook_sync(self.current_notebook_id)
-
-        # Find chat input with multiple fallback selectors
-        chat_selectors = [
-            "textarea[placeholder*='Ask']",
-            "textarea[data-testid*='chat']",
-            "textarea[aria-label*='message']",
-            "[contenteditable='true'][role='textbox']",
-            "input[type='text'][placeholder*='Ask']",
-            "textarea:not([disabled])",
-        ]
-
-        chat_input = None
-        for selector in chat_selectors:
-            try:
-                chat_input = WebDriverWait(self.driver, 2).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                )
-                logger.info(f"Found chat input with selector: {selector}")
-                break
-            except TimeoutException:
-                continue
-
-        if chat_input is None:
+        composer = await self._find_first(S.CHAT_INPUT, timeout=self._timeout_ms)
+        if composer is None:
             raise ChatError("Could not find chat input element")
 
-        # Send message
-        chat_input.clear()
-        chat_input.send_keys(message)
-
-        # Submit message
         try:
-            from selenium.webdriver.common.keys import Keys
+            await composer.click()
+            await composer.fill(message)
+            await composer.press("Enter")
+            logger.info("Message sent")
+        except PlaywrightError as exc:
+            raise ChatError(f"Failed to submit message: {exc}") from exc
 
-            chat_input.send_keys(Keys.RETURN)
-            logger.info("Message sent successfully")
-        except Exception as e:
-            raise ChatError(f"Failed to submit message: {e}")
+    async def _ensure_on_notebook(self) -> None:
+        if not self.current_notebook_id or self.page is None:
+            return
+        if f"notebook/{self.current_notebook_id}" not in self.page.url:
+            await self._navigate(self.current_notebook_id)
 
+    # ------------------------------------------------------------------ #
+    # Responses
+    # ------------------------------------------------------------------ #
     async def get_response(
-        self, wait_for_completion: bool = True, max_wait: int = 60
+        self, wait_for_completion: bool = True, max_wait: Optional[int] = None
     ) -> str:
-        """Get response from NotebookLM with streaming support"""
-        if not self.driver:
+        """Return the latest assistant response.
+
+        When ``wait_for_completion`` is set, wait for the streaming/thinking
+        indicator to clear and the text to stabilize before reading.
+        """
+        if self.page is None:
             raise ChatError("Browser not ready")
 
+        budget = max_wait or self.config.streaming_timeout
         if wait_for_completion:
-            return await asyncio.get_event_loop().run_in_executor(
-                None, self._wait_for_streaming_response, max_wait
-            )
-        else:
-            return await asyncio.get_event_loop().run_in_executor(
-                None, self._get_current_response
-            )
+            await self._wait_until_idle(budget)
+        text = await self._read_latest_response()
+        return text or "No response content found"
 
-    def _wait_for_streaming_response(self, max_wait: int) -> str:
-        """Wait for streaming response to complete"""
-        start_time = time.time()
-        last_response = ""
-        stable_count = 0
-        required_stable_count = self.config.response_stability_checks
+    async def _wait_until_idle(self, max_wait: int) -> None:
+        """Block until the response stops changing (stability poll)."""
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + max_wait
+        required_stable = self.config.response_stability_checks
+        last = ""
+        stable = 0
 
-        logger.info("Waiting for streaming response to complete...")
+        logger.info("Waiting for response to complete...")
+        while loop.time() < deadline:
+            current = await self._read_latest_response()
+            thinking = await self._is_thinking()
 
-        while time.time() - start_time < max_wait:
-            current_response = self._get_current_response()
-
-            if current_response == last_response:
-                stable_count += 1
-                logger.debug(
-                    f"Response stable ({stable_count}/{required_stable_count})"
-                )
-
-                # Check for streaming indicators
-                is_streaming = self._check_streaming_indicators()
-                if not is_streaming and stable_count >= required_stable_count:
-                    logger.info("✅ Response appears complete")
-                    return current_response
+            if current == last and current:
+                stable += 1
+                if not thinking and stable >= required_stable:
+                    logger.info("Response complete")
+                    return
             else:
-                stable_count = 0
-                last_response = current_response
-                logger.debug(f"Response updated: {current_response[:50]}...")
+                stable = 0
+                last = current
+            await asyncio.sleep(1)
 
-            time.sleep(1)
+        logger.warning(f"Response wait timed out ({max_wait}s)")
 
-        logger.warning(
-            f"Response wait timeout ({max_wait}s), returning current content"
-        )
-        return (
-            last_response
-            if last_response
-            else "Response timeout - no content retrieved"
-        )
-
-    def _check_streaming_indicators(self) -> bool:
-        """Check if response is still streaming"""
-        if self.driver is None:
+    async def _is_thinking(self) -> bool:
+        if self.page is None:
             return False
+        for selector in S.THINKING:
+            try:
+                if await self.page.locator(selector).first.is_visible():
+                    return True
+            except PlaywrightError:
+                continue
+        return False
 
-        try:
-            indicators = [
-                "[class*='loading']",
-                "[class*='typing']",
-                "[class*='generating']",
-                "[class*='spinner']",
-                ".dots",
-            ]
-
-            for indicator in indicators:
-                elements = self.driver.find_elements(By.CSS_SELECTOR, indicator)
-                for elem in elements:
-                    if elem.is_displayed():
-                        logger.debug(f"Found streaming indicator: {indicator}")
-                        return True
-
-            return False
-        except Exception:
-            return False
-
-    def _get_current_response(self) -> str:
-        """Get current response text, excluding user input"""
-        if self.driver is None:
+    async def _read_latest_response(self) -> str:
+        """Read the text of the newest assistant message."""
+        if self.page is None:
             return ""
-
-        response_selectors = [
-            "[data-testid*='response']",
-            "[data-testid*='message']",
-            "[role='article']",
-            "[class*='message']:last-child",
-            "[class*='response']:last-child",
-            "[class*='chat-message']:last-child",
-            ".message:last-child",
-            ".chat-bubble:last-child",
-            "[class*='ai-response']",
-            "[class*='assistant-message']",
-        ]
-
-        best_response = ""
-
-        for selector in response_selectors:
+        for selector in S.RESPONSE:
             try:
-                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                if elements:
-                    elem = elements[-1]
-                    text = elem.text.strip()
-
-                    if len(text) > len(best_response):
-                        best_response = text
-
-            except Exception:
+                locator = self.page.locator(selector)
+                count = await locator.count()
+                if count:
+                    text = await locator.nth(count - 1).inner_text()
+                    if text and text.strip():
+                        return text.strip()
+            except PlaywrightError:
                 continue
+        return ""
 
-        if not best_response:
-            # Fallback to any substantial text
-            try:
-                text_elements = self.driver.find_elements(
-                    By.CSS_SELECTOR, "p, div, span"
-                )
-                for elem in reversed(text_elements[-20:]):
-                    text = elem.text.strip()
-                    if len(text) > 50 and not any(
-                        skip in text.lower()
-                        for skip in [
-                            "ask about",
-                            "loading",
-                            "error",
-                            "sign in",
-                            "menu",
-                            "copy_all",
-                            "thumb_up",
-                            "thumb_down",
-                        ]
-                    ):
-                        best_response = text
-                        break
-            except Exception:
-                pass
-
-        # Clean up response by removing user input if it appears at the beginning
-        if best_response:
-            best_response = self._clean_response_text(best_response)
-
-        return best_response if best_response else "No response content found"
-
-    def _clean_response_text(self, response_text: str) -> str:
-        """Clean response text by removing user input and extracting AI response"""
-        if not response_text:
-            return response_text
-
-        # Remove UI artifacts at the end
-        ui_artifacts = [
-            "copy_all",
-            "thumb_up",
-            "thumb_down",
-            "share",
-            "more_options",
-            "like",
-            "dislike",
-        ]
-        for artifact in ui_artifacts:
-            if response_text.endswith(artifact):
-                response_text = response_text[: -len(artifact)].strip()
-
-        # Remove multiple UI artifacts that might appear together
-        lines = response_text.split("\n")
-        cleaned_lines = []
-
-        for line in lines:
-            line_clean = line.strip().lower()
-            # Skip lines that are just UI artifacts
-            if line_clean in ui_artifacts:
-                continue
-            # Skip lines with multiple UI artifacts
-            if (
-                any(artifact in line_clean for artifact in ui_artifacts)
-                and len(line_clean) < 50
-            ):
-                continue
-            cleaned_lines.append(line)
-
-        response_text = "\n".join(cleaned_lines).strip()
-
-        # Split by common delimiters that might separate user input from AI response
-        lines = response_text.split("\n")
-
-        # If response starts with the user's message, try to find where AI response begins
-        # Look for patterns that indicate the start of AI response
-        ai_response_indicators = [
-            "Mixture-of-Experts",  # Specific to MoE responses
-            "Based on",
-            "According to",
-            "Here's",
-            "Let me",
-            "I can",
-            "The answer",
-            "To answer",
-            # Common AI response starters
-        ]
-
-        # Try to find the first line that looks like an AI response
-        start_index = 0
-        for i, line in enumerate(lines):
-            line_clean = line.strip()
-            if line_clean and any(
-                indicator in line_clean for indicator in ai_response_indicators
-            ):
-                start_index = i
-                break
-            # If we find a line that's significantly longer and looks like content
-            elif len(line_clean) > 50 and not line_clean.endswith("?"):
-                start_index = i
-                break
-
-        # Join from the AI response start
-        cleaned_response = "\n".join(lines[start_index:]).strip()
-
-        # If cleaning didn't work well, try a different approach
-        if not cleaned_response or len(cleaned_response) < 50:
-            # Look for the first substantial paragraph
-            paragraphs = response_text.split("\n\n")
-            for paragraph in paragraphs:
-                if len(paragraph.strip()) > 100:  # Substantial content
-                    cleaned_response = paragraph.strip()
-                    break
-
-        # Fallback: if still no good content, return original but try to remove first line if it looks like user input
-        if not cleaned_response or len(cleaned_response) < 50:
-            if lines and len(lines) > 1:
-                first_line = lines[0].strip()
-                # If first line looks like a question or command, remove it
-                if first_line.endswith("?") or len(first_line) < 100:
-                    cleaned_response = "\n".join(lines[1:]).strip()
-                else:
-                    cleaned_response = response_text
-            else:
-                cleaned_response = response_text
-
-        return cleaned_response
-
+    # ------------------------------------------------------------------ #
+    # Navigation
+    # ------------------------------------------------------------------ #
     async def navigate_to_notebook(self, notebook_id: str) -> str:
-        """Navigate to specific notebook"""
-        if not self.driver:
+        if self.page is None:
             raise NavigationError("Browser not started")
+        return await self._navigate(notebook_id)
 
-        return await asyncio.get_event_loop().run_in_executor(
-            None, self._navigate_to_notebook_sync, notebook_id
-        )
-
-    def _navigate_to_notebook_sync(self, notebook_id: str) -> str:
-        """Synchronous notebook navigation"""
-        if self.driver is None:
-            raise RuntimeError("Browser driver not initialized")
-
+    async def _navigate(self, notebook_id: str) -> str:
+        assert self.page is not None
         url = f"{self.config.base_url}/notebook/{notebook_id}"
-        self.driver.get(url)
-
         try:
-            WebDriverWait(self.driver, self.config.timeout).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            self.current_notebook_id = notebook_id
-            return self.driver.current_url
-        except TimeoutException:
-            raise NavigationError(f"Failed to navigate to notebook {notebook_id}")
+            await self.page.goto(url, wait_until="domcontentloaded")
+        except PlaywrightTimeoutError as exc:
+            raise NavigationError(
+                f"Failed to navigate to notebook {notebook_id}"
+            ) from exc
+        self.current_notebook_id = notebook_id
+        return self.page.url
 
-    async def close(self) -> None:
-        """Close browser session"""
-        if self.driver:
-            await asyncio.get_event_loop().run_in_executor(None, self.driver.quit)
-            self.driver = None
-            self._is_authenticated = False
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
+    @property
+    def _timeout_ms(self) -> int:
+        return self.config.timeout * 1000
+
+    async def _find_first(
+        self, candidates: list[str], timeout: int
+    ) -> Optional[Locator]:
+        """Return the first selector's locator that becomes visible, else None.
+
+        The timeout is split across candidates so the total wait is bounded.
+        """
+        if self.page is None:
+            return None
+        per_selector = max(500, timeout // max(1, len(candidates)))
+        for selector in candidates:
+            try:
+                locator = self.page.locator(selector).first
+                await locator.wait_for(state="visible", timeout=per_selector)
+                logger.debug(f"Matched selector: {selector}")
+                return locator
+            except PlaywrightTimeoutError:
+                continue
+            except PlaywrightError:
+                continue
+        return None

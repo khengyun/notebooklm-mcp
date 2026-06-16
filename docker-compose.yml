@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   notebooklm-mcp:
     build: .
@@ -17,11 +15,10 @@ services:
       # Optional: Mount custom scripts
       - ./scripts:/app/scripts:ro
 
-    # For STDIO MCP mode (default), no ports needed
-    # For HTTP mode, uncomment appropriate port:
-    # ports:
-    #   - "8001:8001"  # HTTP transport
-    #   - "8002:8002"  # SSE transport
+    # The image's default command serves the MCP server over HTTP on 8001
+    # (a detached container has no stdin, so STDIO transport would idle).
+    ports:
+      - "8001:8001"  # HTTP transport (http://localhost:8001/mcp/)
 
     # Security settings
     security_opt:

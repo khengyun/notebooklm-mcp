@@ -1,116 +1,111 @@
+"""Comprehensive, deterministic unit tests (no real browser).
+
+This suite was migrated off Selenium + undetected-chromedriver. The browser
+engine is now Patchright async Playwright, so:
+
+* ``selenium``/``undetected_chromedriver`` are uninstalled — nothing here may
+  import them;
+* the client is fully async (``start``/``authenticate``/``send_message``/
+  ``get_response``/``navigate_to_notebook``/``close``) and exposes the Playwright
+  ``Page`` via ``client.page`` (and the ``client.driver`` alias), whose URL is the
+  ``page.url`` property;
+* the removed Selenium internals (``_send_message_sync``, ``_authenticate_sync``,
+  ``WebDriverWait`` …) are re-expressed against the new async API using small
+  inline async fakes injected as ``client.page`` and monkeypatched helpers
+  (``_find_first``, ``_read_latest_response``, ``_is_thinking``).
+
+Only ``tests/test_integration.py`` is allowed to launch a real browser.
+"""
+
 import asyncio
 import json
 from types import MethodType, SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
-from selenium.common.exceptions import TimeoutException
 
 import notebooklm_mcp.monitoring as monitoring
 import notebooklm_mcp.server as server_module
 from notebooklm_mcp import cli as cli_module
 from notebooklm_mcp.client import NotebookLMClient
-from notebooklm_mcp.config import ServerConfig
+from notebooklm_mcp.config import AuthConfig, ServerConfig
 from notebooklm_mcp.exceptions import ChatError, NavigationError, NotebookLMError
 
 
-class DummyElement:
-    def __init__(self, text: str = "", displayed: bool = True):
-        self.text = text
-        self._displayed = displayed
-        self.cleared = False
-        self.sent = []
+# --------------------------------------------------------------------------- #
+# Async Playwright fakes
+# --------------------------------------------------------------------------- #
+class FakeLocator:
+    """Minimal stand-in for a Playwright ``Locator``."""
 
-    def is_displayed(self) -> bool:
-        return self._displayed
+    def __init__(self, texts: list[str] | None = None, visible: bool = False):
+        self._texts = texts or []
+        self._visible = visible
+        self.clicked = False
+        self.filled: list[str] = []
+        self.pressed: list[str] = []
 
-    def clear(self) -> None:
-        self.cleared = True
+    @property
+    def first(self) -> "FakeLocator":
+        return self
 
-    def send_keys(self, value) -> None:
-        self.sent.append(value)
+    def nth(self, _index: int) -> "FakeLocator":
+        return self
 
+    async def count(self) -> int:
+        return len(self._texts)
 
-class DummyDriver:
-    def __init__(self):
-        self.current_url = "https://notebooklm.google.com/notebook/original"
-        self.calls: list[tuple[str, object]] = []
-        self.elements: dict[str, list[DummyElement]] = {}
-        self.chat_element = DummyElement()
+    async def inner_text(self) -> str:
+        return self._texts[-1] if self._texts else ""
 
-    def set_page_load_timeout(self, timeout: int) -> None:
-        self.calls.append(("timeout", timeout))
+    async def is_visible(self) -> bool:
+        return self._visible
 
-    def get(self, url: str) -> None:
-        self.current_url = url
-        self.calls.append(("get", url))
+    async def wait_for(self, **_kwargs) -> None:
+        return None
 
-    def find_elements(self, _by, selector: str):
-        return self.elements.get(selector, [])
+    async def click(self) -> None:
+        self.clicked = True
 
-    def quit(self) -> None:
-        self.calls.append(("quit", None))
+    async def fill(self, value: str) -> None:
+        self.filled.append(value)
 
-
-class DummyFastMCP:
-    def __init__(self, name: str):
-        self.name = name
-        self.tools: dict[str, callable] = {}
-        self.run_calls = []
-
-    def tool(self):
-        def decorator(func):
-            self.tools[func.__name__] = func
-            return func
-
-        return decorator
-
-    async def run_async(self, **kwargs):
-        self.run_calls.append(kwargs)
+    async def press(self, key: str) -> None:
+        self.pressed.append(key)
 
 
-class DummyClient:
-    def __init__(self, config: ServerConfig):
-        self.config = config
-        self.started = False
-        self.closed = False
-        self.sent_messages: list[str] = []
-        self._is_authenticated = True
-        self.navigated_to: list[str] = []
-        self.responses = ["response"]
+class FakePage:
+    """Minimal stand-in for a Playwright ``Page``."""
 
-    async def start(self):
-        self.started = True
+    def __init__(self, url: str = "https://notebooklm.google.com/notebook/abc"):
+        self._url = url
+        self.goto_calls: list[str] = []
+        self.default_timeout: int | None = None
+        self.locators: dict[str, FakeLocator] = {}
 
-    async def close(self):
-        self.closed = True
+    @property
+    def url(self) -> str:
+        return self._url
 
-    async def send_message(self, message: str):
-        self.sent_messages.append(message)
+    def set_default_timeout(self, timeout: int) -> None:
+        self.default_timeout = timeout
 
-    async def get_response(self) -> str:
-        return self.responses[-1]
+    async def goto(self, url: str, wait_until: str | None = None) -> None:
+        self._url = url
+        self.goto_calls.append(url)
 
-    async def navigate_to_notebook(self, notebook_id: str):
-        self.navigated_to.append(notebook_id)
-        self.config.default_notebook_id = notebook_id
+    def locator(self, selector: str) -> FakeLocator:
+        return self.locators.setdefault(selector, FakeLocator())
 
 
-class ImmediateLoop:
-    def __init__(self, loop: asyncio.AbstractEventLoop):
-        self._loop = loop
-
-    def run_in_executor(self, _executor, func, *args):
-        future = self._loop.create_future()
-        try:
-            result = func(*args)
-        except Exception as exc:  # pragma: no cover - exercised in tests
-            future.set_exception(exc)
-        else:
-            future.set_result(result)
-        return future
+def make_client(**config_kwargs) -> NotebookLMClient:
+    config = ServerConfig(**config_kwargs)
+    return NotebookLMClient(config)
 
 
+# --------------------------------------------------------------------------- #
+# CLI tests (engine-agnostic, still valid)
+# --------------------------------------------------------------------------- #
 def test_cli_creates_and_updates_config(tmp_path):
     notebook_id = "123e4567-e89b-12d3-a456-426614174000"
     config_path = tmp_path / "notebooklm-config.json"
@@ -196,279 +191,281 @@ def test_extract_notebook_id_variants():
         cli_module.extract_notebook_id("https://example.com")
 
 
-def test_client_authenticate_sets_flag(monkeypatch):
-    client = NotebookLMClient(ServerConfig(default_notebook_id="abc"))
-    driver = DummyDriver()
-    driver.current_url = "https://notebooklm.google.com/notebook/abc"
-    client.driver = driver
+# --------------------------------------------------------------------------- #
+# Client tests against the new async Patchright API
+# --------------------------------------------------------------------------- #
+def test_client_driver_alias_exposes_page():
+    """``client.driver`` is the back-compat alias monitoring reads."""
+    client = make_client()
+    page = FakePage()
+    client.page = page
+    assert client.driver is page
+    assert client.driver.url == page.url
+    assert client.is_authenticated is False
 
-    monkeypatch.setattr(
-        "notebooklm_mcp.client.WebDriverWait",
-        lambda driver, timeout: SimpleNamespace(until=lambda condition: True),
-    )
 
-    result = client._authenticate_sync()
+def test_client_authenticate_success(monkeypatch):
+    client = make_client(default_notebook_id="abc")
+    page = FakePage(url="https://notebooklm.google.com/notebook/abc")
+    client.page = page
+
+    async def fake_find_first(self, candidates, timeout):
+        return FakeLocator(visible=True)
+
+    monkeypatch.setattr(client, "_find_first", MethodType(fake_find_first, client))
+
+    result = asyncio.run(client.authenticate())
     assert result is True
     assert client._is_authenticated is True
-    assert any(call[0] == "get" for call in driver.calls)
+    # Authentication navigates to the target notebook URL.
+    assert page.goto_calls and page.goto_calls[-1].endswith("/notebook/abc")
 
 
-def test_client_send_message_sync(monkeypatch):
-    client = NotebookLMClient(ServerConfig(default_notebook_id="abc"))
-    driver = DummyDriver()
-    driver.current_url = "https://notebooklm.google.com/home"
-    client.driver = driver
-    client.current_notebook_id = "abc"
+def test_client_authenticate_detects_signed_out():
+    client = make_client(default_notebook_id="abc")
 
-    monkeypatch.setattr(
-        client,
-        "_navigate_to_notebook_sync",
-        MethodType(lambda self, notebook: driver.get(f"navigated/{notebook}"), client),
-    )
-    monkeypatch.setattr(
-        "notebooklm_mcp.client.WebDriverWait",
-        lambda driver, timeout: SimpleNamespace(
-            until=lambda condition: driver.chat_element
-        ),
-    )
+    class RedirectPage(FakePage):
+        async def goto(self, url, wait_until=None):
+            # Simulate Google bouncing us to the sign-in flow.
+            self._url = "https://accounts.google.com/signin"
+            self.goto_calls.append(url)
 
-    client._send_message_sync("hello world")
-    assert driver.chat_element.cleared is True
-    assert "hello world" in driver.chat_element.sent
+    client.page = RedirectPage()
+
+    result = asyncio.run(client.authenticate())
+    assert result is False
+    assert client._is_authenticated is False
 
 
-def test_client_start_fallback(monkeypatch):
-    client = NotebookLMClient(ServerConfig())
-    driver = DummyDriver()
-
-    monkeypatch.setattr("notebooklm_mcp.client.USE_UNDETECTED", False, raising=False)
-
-    def fake_start(self):
-        self.driver = driver
-
-    monkeypatch.setattr(
-        client,
-        "_start_regular_chrome",
-        MethodType(lambda self: fake_start(self), client),
-    )
-
-    client._start_browser()
-    assert client.driver is driver
-    assert ("timeout", client.config.timeout) in driver.calls
+def test_client_authenticate_requires_started_browser():
+    client = make_client(default_notebook_id="abc")
+    client.page = None
+    with pytest.raises(NotebookLMError):  # AuthenticationError subclasses this
+        asyncio.run(client.authenticate())
 
 
-def test_client_send_message_sync_errors(monkeypatch):
-    client = NotebookLMClient(ServerConfig(default_notebook_id="abc"))
-    driver = DummyDriver()
-    client.driver = driver
-    client.current_notebook_id = None
-
-    monkeypatch.setattr(
-        "notebooklm_mcp.client.WebDriverWait",
-        lambda driver, timeout: SimpleNamespace(
-            until=lambda condition: (_ for _ in ()).throw(TimeoutException())
-        ),
-    )
-
-    with pytest.raises(ChatError):
-        client._send_message_sync("hi")
-
-
-def test_client_send_message_async(monkeypatch):
-    client = NotebookLMClient(ServerConfig())
-    client.driver = object()
+def test_client_send_message_types_and_submits(monkeypatch):
+    client = make_client(default_notebook_id="abc")
+    page = FakePage(url="https://notebooklm.google.com/notebook/abc")
+    client.page = page
     client._is_authenticated = True
-    recorded = {}
 
-    monkeypatch.setattr(
-        client,
-        "_send_message_sync",
-        MethodType(lambda self, message: recorded.setdefault("msg", message), client),
-    )
+    composer = FakeLocator(visible=True)
 
-    async def run_test():
-        loop = asyncio.get_running_loop()
-        monkeypatch.setattr(
-            "notebooklm_mcp.client.asyncio.get_event_loop", lambda: ImmediateLoop(loop)
-        )
-        await client.send_message("payload")
+    async def fake_find_first(self, candidates, timeout):
+        return composer
 
-    asyncio.run(run_test())
-    assert recorded["msg"] == "payload"
+    monkeypatch.setattr(client, "_find_first", MethodType(fake_find_first, client))
+
+    asyncio.run(client.send_message("hello world"))
+    assert composer.clicked is True
+    assert composer.filled == ["hello world"]
+    assert composer.pressed == ["Enter"]
+
+
+def test_client_send_message_requires_auth():
+    client = make_client(default_notebook_id="abc")
+    client.page = FakePage()
+    client._is_authenticated = False
+    with pytest.raises(ChatError):
+        asyncio.run(client.send_message("hi"))
+
+
+def test_client_send_message_missing_composer(monkeypatch):
+    client = make_client(default_notebook_id="abc")
+    page = FakePage(url="https://notebooklm.google.com/notebook/abc")
+    client.page = page
+    client._is_authenticated = True
+
+    async def no_composer(self, candidates, timeout):
+        return None
+
+    monkeypatch.setattr(client, "_find_first", MethodType(no_composer, client))
+
+    with pytest.raises(ChatError, match="Could not find chat input"):
+        asyncio.run(client.send_message("hi"))
 
 
 def test_client_get_response_quick(monkeypatch):
-    client = NotebookLMClient(ServerConfig())
-    client.driver = object()
-    monkeypatch.setattr(
-        client,
-        "_get_current_response",
-        MethodType(lambda self: "response", client),
-    )
+    client = make_client()
+    client.page = FakePage()
 
-    async def run_test():
-        loop = asyncio.get_running_loop()
-        monkeypatch.setattr(
-            "notebooklm_mcp.client.asyncio.get_event_loop", lambda: ImmediateLoop(loop)
-        )
-        return await client.get_response(wait_for_completion=False)
+    async def fake_read(self):
+        return "the answer"
 
-    result = asyncio.run(run_test())
-    assert result == "response"
+    monkeypatch.setattr(client, "_read_latest_response", MethodType(fake_read, client))
+
+    result = asyncio.run(client.get_response(wait_for_completion=False))
+    assert result == "the answer"
 
 
-def test_check_streaming_indicators_detects_visible():
-    client = NotebookLMClient(ServerConfig())
-    driver = DummyDriver()
-    visible = DummyElement("", displayed=True)
-    driver.elements = {"[class*='loading']": [visible]}
-    client.driver = driver
+def test_client_get_response_empty_falls_back(monkeypatch):
+    client = make_client()
+    client.page = FakePage()
 
-    assert client._check_streaming_indicators() is True
-    visible._displayed = False
-    assert client._check_streaming_indicators() is False
+    async def fake_read(self):
+        return ""
 
+    monkeypatch.setattr(client, "_read_latest_response", MethodType(fake_read, client))
 
-def test_client_navigation_and_close(monkeypatch):
-    client = NotebookLMClient(ServerConfig())
-    driver = DummyDriver()
-    client.driver = driver
-
-    monkeypatch.setattr(
-        "notebooklm_mcp.client.WebDriverWait",
-        lambda driver, timeout: SimpleNamespace(until=lambda condition: True),
-    )
-
-    called = {}
-
-    def fake_quit():
-        called["quit"] = True
-
-    driver.quit = fake_quit
-
-    async def run_test():
-        loop = asyncio.get_running_loop()
-        monkeypatch.setattr(
-            "notebooklm_mcp.client.asyncio.get_event_loop", lambda: ImmediateLoop(loop)
-        )
-        url = await client.navigate_to_notebook("xyz")
-        assert url.endswith("/xyz")
-        await client.close()
-
-    asyncio.run(run_test())
-    assert called["quit"] is True
-    assert client.driver is None
+    result = asyncio.run(client.get_response(wait_for_completion=False))
+    assert result == "No response content found"
 
 
-def test_get_current_response_prefers_longest():
-    client = NotebookLMClient(ServerConfig())
-    driver = DummyDriver()
-    driver.elements = {
-        "[data-testid*='response']": [DummyElement("short")],
-        "[class*='response']:last-child": [
-            DummyElement("This is a substantially longer answer from NotebookLM")
-        ],
+def test_client_get_response_waits_until_idle(monkeypatch):
+    client = make_client(response_stability_checks=1)
+    client.page = FakePage()
+    reads = iter(["partial", "final", "final", "final"])
+
+    async def fake_read(self):
+        return next(reads, "final")
+
+    async def not_thinking(self):
+        return False
+
+    monkeypatch.setattr(client, "_read_latest_response", MethodType(fake_read, client))
+    monkeypatch.setattr(client, "_is_thinking", MethodType(not_thinking, client))
+
+    async def instant_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("notebooklm_mcp.client.asyncio.sleep", instant_sleep)
+
+    result = asyncio.run(client.get_response(wait_for_completion=True, max_wait=5))
+    assert result == "final"
+
+
+def test_client_get_response_requires_browser():
+    client = make_client()
+    client.page = None
+    with pytest.raises(ChatError):
+        asyncio.run(client.get_response())
+
+
+def test_client_read_latest_response_prefers_populated_selector():
+    client = make_client()
+    page = FakePage()
+    # First selector empty, second has text — client should return the text.
+    page.locators = {
+        ".to-user-container .message-text-content": FakeLocator(texts=[]),
+        "chat-message .to-user-container .message-text-content": FakeLocator(
+            texts=["This is a substantially longer answer from NotebookLM"]
+        ),
     }
-    client.driver = driver
+    client.page = page
 
-    result = client._get_current_response()
+    result = asyncio.run(client._read_latest_response())
     assert "substantially longer" in result
 
 
-def test_get_current_response_fallback_text():
-    client = NotebookLMClient(ServerConfig())
+def test_client_is_thinking_detects_visible_indicator():
+    client = make_client()
+    page = FakePage()
+    page.locators = {"div.thinking-message": FakeLocator(visible=True)}
+    client.page = page
 
-    class FallbackDriver(DummyDriver):
-        def __init__(self):
-            super().__init__()
-            self.elements = {}
+    assert asyncio.run(client._is_thinking()) is True
 
-        def find_elements(self, _by, selector):
-            if selector == "p, div, span":
-                return [
-                    DummyElement("Ask about something"),
-                    DummyElement(
-                        "This is a comprehensive explanation that should be used as fallback"
-                    ),
-                ]
-            return []
-
-    client.driver = FallbackDriver()
-    result = client._get_current_response()
-    assert "comprehensive explanation" in result
+    page.locators["div.thinking-message"]._visible = False
+    for selector in ("div.thinking-message", ".thinking-message"):
+        page.locators[selector] = FakeLocator(visible=False)
+    assert asyncio.run(client._is_thinking()) is False
 
 
-def test_clean_response_text_removes_artifacts():
-    client = NotebookLMClient(ServerConfig())
-    messy = "Question?\ncopy_all\nthumb_down\nHere is the answer you need."
-    cleaned = client._clean_response_text(messy)
-    assert cleaned.startswith("Here is the answer")
+def test_client_navigate_to_notebook_updates_state():
+    client = make_client()
+    page = FakePage()
+    client.page = page
 
-
-def test_wait_for_streaming_response(monkeypatch):
-    client = NotebookLMClient(ServerConfig(response_stability_checks=1))
-    client.driver = object()
-    responses = iter(["complete", "complete"])
-
-    monkeypatch.setattr(
-        client,
-        "_get_current_response",
-        MethodType(lambda self: next(responses), client),
-    )
-    monkeypatch.setattr(
-        client,
-        "_check_streaming_indicators",
-        MethodType(lambda self: False, client),
-    )
-    monkeypatch.setattr("notebooklm_mcp.client.time.sleep", lambda _: None)
-
-    result = client._wait_for_streaming_response(1)
-    assert result == "complete"
-
-
-def test_wait_for_streaming_response_timeout(monkeypatch):
-    client = NotebookLMClient(ServerConfig())
-    client.driver = object()
-    monkeypatch.setattr(
-        client,
-        "_get_current_response",
-        MethodType(lambda self: "", client),
-    )
-    monkeypatch.setattr("notebooklm_mcp.client.time.sleep", lambda _: None)
-
-    result = client._wait_for_streaming_response(0)
-    assert result == "Response timeout - no content retrieved"
-
-
-def test_navigate_to_notebook_sync_success(monkeypatch):
-    client = NotebookLMClient(ServerConfig(default_notebook_id="abc"))
-    driver = DummyDriver()
-    client.driver = driver
-
-    monkeypatch.setattr(
-        "notebooklm_mcp.client.WebDriverWait",
-        lambda driver, timeout: SimpleNamespace(until=lambda condition: True),
-    )
-
-    result = client._navigate_to_notebook_sync("xyz")
-    assert result.endswith("/xyz")
+    url = asyncio.run(client.navigate_to_notebook("xyz"))
+    assert url.endswith("/notebook/xyz")
     assert client.current_notebook_id == "xyz"
 
 
-def test_navigate_to_notebook_sync_timeout(monkeypatch):
-    client = NotebookLMClient(ServerConfig(default_notebook_id="abc"))
-    driver = DummyDriver()
-    client.driver = driver
-
-    def failing_wait(driver, timeout):
-        return SimpleNamespace(
-            until=lambda condition: (_ for _ in ()).throw(TimeoutException())
-        )
-
-    monkeypatch.setattr("notebooklm_mcp.client.WebDriverWait", failing_wait)
-
+def test_client_navigate_requires_started_browser():
+    client = make_client()
+    client.page = None
     with pytest.raises(NavigationError):
-        client._navigate_to_notebook_sync("xyz")
+        asyncio.run(client.navigate_to_notebook("xyz"))
+
+
+def test_client_close_is_idempotent():
+    client = make_client()
+    client.page = FakePage()
+    client.context = None
+    client._playwright = None
+    client._is_authenticated = True
+
+    asyncio.run(client.close())
+    assert client.page is None
+    assert client._is_authenticated is False
+
+    # Second close must not raise (idempotent).
+    asyncio.run(client.close())
+    assert client.page is None
+
+
+# --------------------------------------------------------------------------- #
+# Server tests (lazy init, async DummyClient)
+# --------------------------------------------------------------------------- #
+class DummyFastMCP:
+    def __init__(self, name: str):
+        self.name = name
+        self.tools: dict[str, callable] = {}
+        self.run_calls = []
+
+    def tool(self):
+        def decorator(func):
+            self.tools[func.__name__] = func
+            return func
+
+        return decorator
+
+    async def run_async(self, **kwargs):
+        self.run_calls.append(kwargs)
+
+
+# Unique sentinel so response assertions test real wiring (the server
+# surfacing the client's value) rather than echoing a generic "response".
+DUMMY_RESPONSE = "client-produced-answer-9d21"
+
+
+class DummyClient:
+    def __init__(self, config: ServerConfig):
+        self.config = config
+        self.started = False
+        self.closed = False
+        self.authenticated = False
+        self.sent_messages: list[str] = []
+        self._is_authenticated = True
+        self.navigated_to: list[str] = []
+        self.responses = [DUMMY_RESPONSE]
+        self.call_order: list[str] = []
+        self.get_response_calls = 0
+
+    async def start(self):
+        self.started = True
+
+    async def authenticate(self):
+        self.authenticated = True
+        return True
+
+    async def close(self):
+        self.closed = True
+
+    async def send_message(self, message: str):
+        self.sent_messages.append(message)
+        self.call_order.append("send")
+
+    async def get_response(self) -> str:
+        self.get_response_calls += 1
+        self.call_order.append("get")
+        return self.responses[-1]
+
+    async def navigate_to_notebook(self, notebook_id: str):
+        self.navigated_to.append(notebook_id)
+        self.config.default_notebook_id = notebook_id
+        self.call_order.append("navigate")
 
 
 @pytest.fixture(autouse=True)
@@ -485,7 +482,7 @@ def server(monkeypatch):
     instance.client = dummy
 
     async def noop(self):
-        return None
+        return self.client
 
     instance._ensure_client = MethodType(noop, instance)
     return instance, dummy
@@ -506,17 +503,58 @@ def test_server_chat_flow(server):
     response = asyncio.run(server_instance.app.tools["send_chat_message"](request))
     assert response["status"] == "completed"
     assert dummy.sent_messages == ["hi"]
+    # The server must surface the client's actual response (unique sentinel),
+    # proving it isn't returning a hardcoded string.
+    assert response["response"] == DUMMY_RESPONSE
+    assert dummy.call_order == ["send", "get"]
 
+    dummy.call_order.clear()
     chat_request = server_module.ChatRequest(message="hey", notebook_id="new")
     response = asyncio.run(
         server_instance.app.tools["chat_with_notebook"](chat_request)
     )
     assert response["notebook_id"] == "new"
     assert dummy.navigated_to == ["new"]
+    assert response["response"] == DUMMY_RESPONSE
+    # navigate must precede send which precedes read.
+    assert dummy.call_order == ["navigate", "send", "get"]
 
     nav_request = server_module.NavigateRequest(notebook_id="abc")
     result = asyncio.run(server_instance.app.tools["navigate_to_notebook"](nav_request))
     assert result["status"] == "success"
+    assert result["notebook_id"] == "abc"
+
+
+def test_server_response_tools_wire_client_value(server):
+    """get_chat_response and get_quick_response must both surface the client's
+    real response value and each delegate to client.get_response() once."""
+    server_instance, dummy = server
+
+    chat = asyncio.run(
+        server_instance.app.tools["get_chat_response"](
+            server_module.GetResponseRequest(timeout=1)
+        )
+    )
+    quick = asyncio.run(server_instance.app.tools["get_quick_response"]())
+
+    assert chat["response"] == DUMMY_RESPONSE
+    assert quick["response"] == DUMMY_RESPONSE
+    assert chat["status"] == "success"
+    assert quick["status"] == "success"
+    assert dummy.get_response_calls == 2
+
+
+def test_server_send_chat_no_wait_skips_get_response(server):
+    """wait_for_response=False must send the message but never read a reply."""
+    server_instance, dummy = server
+    request = server_module.SendMessageRequest(message="hi", wait_for_response=False)
+    response = asyncio.run(server_instance.app.tools["send_chat_message"](request))
+
+    assert response["status"] == "sent"
+    assert "response" not in response
+    assert dummy.sent_messages == ["hi"]
+    assert dummy.get_response_calls == 0
+    assert dummy.call_order == ["send"]
 
 
 def test_server_default_notebook_tools(server):
@@ -530,7 +568,45 @@ def test_server_default_notebook_tools(server):
     assert server_instance.config.default_notebook_id == "xyz"
 
 
-def test_server_start_and_stop(monkeypatch):
+def test_server_ensure_client_lazy_init(monkeypatch):
+    """First tool call triggers start()+authenticate() exactly once."""
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    # engine="patchright" routes _build_client through the injectable
+    # NotebookLMClient symbol (the DummyClient), not the RPC backend.
+    instance = server_module.NotebookLMFastMCP(
+        ServerConfig(default_notebook_id="abc", engine="patchright")
+    )
+
+    asyncio.run(instance._ensure_client())
+    first_client = instance.client
+    assert first_client.started is True
+    assert first_client.authenticated is True
+
+    asyncio.run(instance._ensure_client())
+    assert instance.client is first_client  # not recreated
+
+
+def test_server_ensure_client_error_resets(monkeypatch):
+    """A failed init raises NotebookLMError and clears the client for retry."""
+
+    class FailingClient(DummyClient):
+        async def start(self):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(server_module, "NotebookLMClient", FailingClient)
+    # engine="patchright" so the injectable FailingClient is built and its
+    # start() raises deterministically (no RPC/browser bootstrap).
+    instance = server_module.NotebookLMFastMCP(
+        ServerConfig(default_notebook_id="abc", engine="patchright")
+    )
+
+    with pytest.raises(NotebookLMError, match="Client initialization failed"):
+        asyncio.run(instance._ensure_client())
+    assert instance.client is None
+
+
+def test_server_start_binds_transport_without_browser(monkeypatch):
+    """start() is lazy: it binds the transport and never touches the browser."""
     monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
     instance = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
@@ -540,21 +616,30 @@ def test_server_start_and_stop(monkeypatch):
         "host": "0.0.0.0",
         "port": 9000,
     }
+    # No tool was called, so the browser client was never constructed.
+    assert instance.client is None
 
-    asyncio.run(instance.stop())
-    assert instance.client.closed is True
+    asyncio.run(instance.stop())  # nothing to close, must not raise
 
 
-def test_server_start_error(monkeypatch):
-    class ExplodingClient(DummyClient):
-        async def start(self):
-            raise RuntimeError("boom")
-
-    monkeypatch.setattr(server_module, "NotebookLMClient", ExplodingClient)
+def test_server_start_transport_error(monkeypatch):
+    """The start() error path fires when the transport layer itself fails."""
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
     instance = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+
+    async def boom(**_kwargs):
+        raise RuntimeError("transport down")
+
+    instance.app.run_async = boom
 
     with pytest.raises(NotebookLMError, match="Server startup failed"):
         asyncio.run(instance.start())
+
+
+def test_server_stop_closes_client(server):
+    server_instance, dummy = server
+    asyncio.run(server_instance.stop())
+    assert dummy.closed is True
 
 
 def test_server_tool_error_paths(monkeypatch, server):
@@ -574,6 +659,9 @@ def test_server_tool_error_paths(monkeypatch, server):
         )
 
 
+# --------------------------------------------------------------------------- #
+# Monitoring tests
+# --------------------------------------------------------------------------- #
 class DummyPsutil:
     def __init__(self, memory_percent=10.0, cpu_percent=20.0):
         self._memory_percent = memory_percent
@@ -685,10 +773,10 @@ def test_health_checker_reports_status(monkeypatch):
     dummy_psutil = DummyPsutil(memory_percent=40.0, cpu_percent=30.0)
     monkeypatch.setattr(monitoring, "psutil", dummy_psutil)
 
+    # Patchright client surfaces the URL via ``driver.url`` (page.url), not the
+    # Selenium ``current_url``.
     client = SimpleNamespace(
-        driver=SimpleNamespace(
-            current_url="https://notebooklm.google.com/notebook/123"
-        ),
+        driver=SimpleNamespace(url="https://notebooklm.google.com/notebook/123"),
         _is_authenticated=True,
     )
 
@@ -854,3 +942,11 @@ def test_health_checker_handles_exception(monkeypatch):
     result = asyncio.run(checker.check_health())
     assert result.healthy is False
     assert result.browser_status == "error"
+
+
+# Keep AuthConfig referenced so config import is meaningful even if the smoke
+# integration tier (which uses it) is skipped in headless CI.
+def test_auth_config_defaults():
+    cfg = ServerConfig(auth=AuthConfig(profile_dir="/tmp/x"))
+    assert cfg.auth.profile_dir == "/tmp/x"
+    assert cfg.auth.use_persistent_session is True

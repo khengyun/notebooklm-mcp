@@ -53,6 +53,47 @@ class SetNotebookRequest(BaseModel):
     notebook_id: str = Field(..., description="The notebook ID to set as default")
 
 
+class CreateNotebookRequest(BaseModel):
+    """Request model for creating a notebook"""
+
+    title: str = Field(..., description="Title for the new notebook")
+
+
+class RenameNotebookRequest(BaseModel):
+    """Request model for renaming a notebook"""
+
+    notebook_id: str = Field(..., description="The notebook ID to rename")
+    new_title: str = Field(..., description="The new title")
+
+
+class NotebookIdRequest(BaseModel):
+    """Request model for operations that take only a notebook ID"""
+
+    notebook_id: str = Field(..., description="The notebook ID")
+
+
+class AddSourceUrlRequest(BaseModel):
+    """Request model for adding a URL source"""
+
+    notebook_id: str = Field(..., description="The notebook ID")
+    url: str = Field(..., description="Web URL or YouTube link to add as a source")
+
+
+class AddSourceTextRequest(BaseModel):
+    """Request model for adding a text source"""
+
+    notebook_id: str = Field(..., description="The notebook ID")
+    title: str = Field(..., description="Title for the text source")
+    text: str = Field(..., description="The raw text content")
+
+
+class DeleteSourceRequest(BaseModel):
+    """Request model for deleting a source"""
+
+    notebook_id: str = Field(..., description="The notebook ID")
+    source_id: str = Field(..., description="The source ID to delete")
+
+
 class NotebookLMFastMCP:
     """FastMCP v2 server for NotebookLM automation with enhanced error handling"""
 
@@ -70,16 +111,52 @@ class NotebookLMFastMCP:
             f"FastMCP v2 server initialized for notebook: {config.default_notebook_id}"
         )
 
-    async def _ensure_client(self) -> None:
-        """Ensure NotebookLM client is initialized and authenticated"""
+    async def _ensure_client(self) -> NotebookLMClient:
+        """Lazily initialize and authenticate the NotebookLM client.
+
+        Called on the first tool invocation (not at server startup) so the MCP
+        transport binds immediately and a browser failure degrades a single
+        tool call instead of taking down the whole server. Returns the live
+        client so callers get a non-optional reference.
+        """
         try:
             if self.client is None:
-                self.client = NotebookLMClient(self.config)
+                self.client = self._build_client()
                 await self.client.start()
-                logger.info("✅ NotebookLM client initialized and authenticated")
+                await self.client.authenticate()
+                logger.info("✅ NotebookLM client initialized")
+            return self.client
         except Exception as e:
+            # Reset so the next call can retry from a clean state.
+            self.client = None
             logger.error(f"Failed to initialize client: {e}")
             raise NotebookLMError(f"Client initialization failed: {e}")
+
+    def _build_client(self) -> Any:
+        """Construct the client for the configured engine.
+
+        ``rpc`` (default) → notebooklm-py backend with full management.
+        ``patchright`` → the browser/DOM engine (chat only). The patchright
+        branch goes through the module-level ``NotebookLMClient`` symbol so it
+        stays test-injectable.
+        """
+        engine = getattr(self.config, "engine", "rpc")
+        if engine == "patchright":
+            return NotebookLMClient(self.config)
+        from .client_rpc import NotebookLMRPCClient
+
+        return NotebookLMRPCClient(self.config)
+
+    def _require_management(self) -> Any:
+        """Return the client, ensuring the active engine supports management."""
+        if self.client is None or not getattr(
+            self.client, "supports_management", False
+        ):
+            raise NotebookLMError(
+                "Notebook/source management requires the 'rpc' engine "
+                "(set engine='rpc' in your config)."
+            )
+        return self.client
 
     def _setup_tools(self) -> None:
         """Setup FastMCP v2 tools with enhanced error handling and performance"""
@@ -117,13 +194,13 @@ class NotebookLMFastMCP:
         async def send_chat_message(request: SendMessageRequest) -> Dict[str, Any]:
             """Send a message to NotebookLM chat interface."""
             try:
-                await self._ensure_client()
-                await self.client.send_message(request.message)
+                client = await self._ensure_client()
+                await client.send_message(request.message)
 
                 response_data = {"status": "sent", "message": request.message}
 
                 if request.wait_for_response:
-                    response = await self.client.get_response()
+                    response = await client.get_response()
                     response_data["response"] = response
                     response_data["status"] = "completed"
 
@@ -138,8 +215,8 @@ class NotebookLMFastMCP:
         async def get_chat_response(request: GetResponseRequest) -> Dict[str, Any]:
             """Get the latest response from NotebookLM with streaming support."""
             try:
-                await self._ensure_client()
-                response = await self.client.get_response()
+                client = await self._ensure_client()
+                response = await client.get_response()
 
                 logger.info("Response retrieved successfully")
                 return {
@@ -156,8 +233,8 @@ class NotebookLMFastMCP:
         async def get_quick_response() -> Dict[str, Any]:
             """Get current response without waiting for completion."""
             try:
-                await self._ensure_client()
-                response = await self.client.get_response()
+                client = await self._ensure_client()
+                response = await client.get_response()
 
                 return {
                     "status": "success",
@@ -173,15 +250,15 @@ class NotebookLMFastMCP:
         async def chat_with_notebook(request: ChatRequest) -> Dict[str, Any]:
             """Complete chat interaction: send message and get response."""
             try:
-                await self._ensure_client()
+                client = await self._ensure_client()
 
                 # Switch notebook if specified
                 if request.notebook_id:
-                    await self.client.navigate_to_notebook(request.notebook_id)
+                    await client.navigate_to_notebook(request.notebook_id)
 
                 # Send message and get response
-                await self.client.send_message(request.message)
-                response = await self.client.get_response()
+                await client.send_message(request.message)
+                response = await client.get_response()
 
                 logger.info(f"Chat completed: {request.message[:50]}...")
                 return {
@@ -200,8 +277,8 @@ class NotebookLMFastMCP:
         async def navigate_to_notebook(request: NavigateRequest) -> Dict[str, Any]:
             """Navigate to a specific notebook."""
             try:
-                await self._ensure_client()
-                await self.client.navigate_to_notebook(request.notebook_id)
+                client = await self._ensure_client()
+                await client.navigate_to_notebook(request.notebook_id)
 
                 logger.info(f"Navigated to notebook: {request.notebook_id}")
                 return {
@@ -244,14 +321,143 @@ class NotebookLMFastMCP:
                 logger.error(f"Failed to set default notebook: {e}")
                 raise NotebookLMError(f"Failed to set default notebook: {e}")
 
+        # ------------------------------------------------------------------ #
+        # Notebook & source management (RPC engine only)
+        # ------------------------------------------------------------------ #
+        @self.app.tool()
+        async def list_notebooks() -> Dict[str, Any]:
+            """List all notebooks in the account."""
+            try:
+                await self._ensure_client()
+                client = self._require_management()
+                notebooks = await client.list_notebooks()
+                return {
+                    "status": "success",
+                    "count": len(notebooks),
+                    "notebooks": notebooks,
+                }
+            except Exception as e:
+                logger.error(f"Failed to list notebooks: {e}")
+                raise NotebookLMError(f"Failed to list notebooks: {e}")
+
+        @self.app.tool()
+        async def create_notebook(request: CreateNotebookRequest) -> Dict[str, Any]:
+            """Create a new notebook with the given title."""
+            try:
+                await self._ensure_client()
+                client = self._require_management()
+                notebook = await client.create_notebook(request.title)
+                return {"status": "success", "notebook": notebook}
+            except Exception as e:
+                logger.error(f"Failed to create notebook: {e}")
+                raise NotebookLMError(f"Failed to create notebook: {e}")
+
+        @self.app.tool()
+        async def rename_notebook(request: RenameNotebookRequest) -> Dict[str, Any]:
+            """Rename a notebook."""
+            try:
+                await self._ensure_client()
+                client = self._require_management()
+                notebook = await client.rename_notebook(
+                    request.notebook_id, request.new_title
+                )
+                return {"status": "success", "notebook": notebook}
+            except Exception as e:
+                logger.error(f"Failed to rename notebook: {e}")
+                raise NotebookLMError(f"Failed to rename notebook: {e}")
+
+        @self.app.tool()
+        async def delete_notebook(request: NotebookIdRequest) -> Dict[str, Any]:
+            """Delete a notebook by ID."""
+            try:
+                await self._ensure_client()
+                client = self._require_management()
+                await client.delete_notebook(request.notebook_id)
+                return {"status": "success", "notebook_id": request.notebook_id}
+            except Exception as e:
+                logger.error(f"Failed to delete notebook: {e}")
+                raise NotebookLMError(f"Failed to delete notebook: {e}")
+
+        @self.app.tool()
+        async def get_notebook_summary(request: NotebookIdRequest) -> Dict[str, Any]:
+            """Get the AI summary of a notebook."""
+            try:
+                await self._ensure_client()
+                client = self._require_management()
+                summary = await client.get_notebook_summary(request.notebook_id)
+                return {"status": "success", "summary": summary}
+            except Exception as e:
+                logger.error(f"Failed to get notebook summary: {e}")
+                raise NotebookLMError(f"Failed to get notebook summary: {e}")
+
+        @self.app.tool()
+        async def list_sources(request: NotebookIdRequest) -> Dict[str, Any]:
+            """List the sources in a notebook."""
+            try:
+                await self._ensure_client()
+                client = self._require_management()
+                sources = await client.list_sources(request.notebook_id)
+                return {
+                    "status": "success",
+                    "count": len(sources),
+                    "sources": sources,
+                }
+            except Exception as e:
+                logger.error(f"Failed to list sources: {e}")
+                raise NotebookLMError(f"Failed to list sources: {e}")
+
+        @self.app.tool()
+        async def add_source_url(request: AddSourceUrlRequest) -> Dict[str, Any]:
+            """Add a web URL (or YouTube link) as a source to a notebook."""
+            try:
+                await self._ensure_client()
+                client = self._require_management()
+                source = await client.add_source_url(request.notebook_id, request.url)
+                return {"status": "success", "source": source}
+            except Exception as e:
+                logger.error(f"Failed to add URL source: {e}")
+                raise NotebookLMError(f"Failed to add URL source: {e}")
+
+        @self.app.tool()
+        async def add_source_text(request: AddSourceTextRequest) -> Dict[str, Any]:
+            """Add raw text as a source to a notebook."""
+            try:
+                await self._ensure_client()
+                client = self._require_management()
+                source = await client.add_source_text(
+                    request.notebook_id, request.title, request.text
+                )
+                return {"status": "success", "source": source}
+            except Exception as e:
+                logger.error(f"Failed to add text source: {e}")
+                raise NotebookLMError(f"Failed to add text source: {e}")
+
+        @self.app.tool()
+        async def delete_source(request: DeleteSourceRequest) -> Dict[str, Any]:
+            """Delete a source from a notebook."""
+            try:
+                await self._ensure_client()
+                client = self._require_management()
+                await client.delete_source(request.notebook_id, request.source_id)
+                return {
+                    "status": "success",
+                    "notebook_id": request.notebook_id,
+                    "source_id": request.source_id,
+                }
+            except Exception as e:
+                logger.error(f"Failed to delete source: {e}")
+                raise NotebookLMError(f"Failed to delete source: {e}")
+
     async def start(
         self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000
-    ):
-        """Start the FastMCP v2 server with specified transport"""
-        try:
-            # Initialize client
-            await self._ensure_client()
+    ) -> None:
+        """Start the FastMCP v2 server with specified transport.
 
+        The browser client is initialized lazily on first tool use (see
+        ``_ensure_client``), so the transport binds without requiring a working
+        browser up front.
+        """
+        try:
             # Run the FastMCP server with specified transport
             if transport == "http":
                 logger.info(f"🌐 Starting HTTP server on http://{host}:{port}/mcp/")
@@ -267,7 +473,7 @@ class NotebookLMFastMCP:
             logger.error(f"Failed to start FastMCP server: {e}")
             raise NotebookLMError(f"Server startup failed: {e}")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Gracefully stop the server"""
         try:
             if self.client:
@@ -287,7 +493,7 @@ def create_fastmcp_server(config_file: str) -> NotebookLMFastMCP:
 
 
 # Main entry point for standalone usage
-async def main():
+async def main() -> None:
     """Main entry point for running server standalone"""
     import sys
 

@@ -26,30 +26,50 @@ class DummyFastMCP:
         self.run_calls.append(kwargs)
 
 
+# A distinctive sentinel that the production code can only surface by actually
+# wiring the client's return value through. Asserting on this (rather than a
+# generic "response") turns the response-field checks from tautologies into
+# real wiring assertions: a mutation that hardcodes any other string is caught.
+DUMMY_RESPONSE = "client-produced-answer-7f3a"
+
+
 class DummyClient:
     def __init__(self, config):
         self.config = config
         self.started = False
         self.closed = False
+        self.authenticated = False
         self.sent_messages = []
         self._is_authenticated = True
         self.navigated_to = []
+        # Ordered log of orchestration calls so tests can assert the server
+        # drives the client in the right sequence (navigate -> send -> read).
+        self.call_order: list[str] = []
+        self.get_response_calls = 0
 
     async def start(self):
         self.started = True
+
+    async def authenticate(self):
+        self.authenticated = True
+        return True
 
     async def close(self):
         self.closed = True
 
     async def send_message(self, message):
         self.sent_messages.append(message)
+        self.call_order.append("send")
 
     async def get_response(self):
-        return "response"
+        self.get_response_calls += 1
+        self.call_order.append("get")
+        return DUMMY_RESPONSE
 
     async def navigate_to_notebook(self, notebook_id):
         self.config.default_notebook_id = notebook_id
         self.navigated_to.append(notebook_id)
+        self.call_order.append("navigate")
 
 
 @pytest.fixture(autouse=True)
@@ -86,13 +106,18 @@ async def test_ensure_client_initializes_once(monkeypatch):
             created.append(self)
 
     monkeypatch.setattr(server_module, "NotebookLMClient", TrackingClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    # engine="patchright" routes _build_client through the injectable
+    # NotebookLMClient symbol (the TrackingClient) instead of the RPC backend.
+    server = server_module.NotebookLMFastMCP(
+        ServerConfig(default_notebook_id="abc", engine="patchright")
+    )
 
     await server._ensure_client()
     await server._ensure_client()
 
     assert len(created) == 1
     assert created[0].started is True
+    assert created[0].authenticated is True
 
 
 @pytest.mark.asyncio
@@ -102,10 +127,17 @@ async def test_ensure_client_errors_propagate(monkeypatch):
             raise RuntimeError("boom")
 
     monkeypatch.setattr(server_module, "NotebookLMClient", FailingClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    # engine="patchright" so the injectable FailingClient is built (and its
+    # start() raises) without touching the RPC/browser bootstrap path.
+    server = server_module.NotebookLMFastMCP(
+        ServerConfig(default_notebook_id="abc", engine="patchright")
+    )
 
     with pytest.raises(NotebookLMError, match="Client initialization failed"):
         await server._ensure_client()
+
+    # On failure the client must be reset so the next call retries cleanly.
+    assert server.client is None
 
 
 @pytest.mark.asyncio
@@ -122,13 +154,39 @@ async def test_start_uses_transport(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_handles_errors(monkeypatch):
+async def test_start_does_not_init_browser_eagerly(monkeypatch):
+    """Lazy init: a broken browser client must NOT stop the transport binding.
+
+    ``start()`` no longer calls ``_ensure_client`` — the browser is created on
+    the first tool call — so even a client whose ``start()`` explodes leaves the
+    transport free to bind.
+    """
+
     class ExplodingClient(DummyClient):
-        async def start(self):  # pragma: no cover - error branch
+        async def start(self):  # pragma: no cover - must never be called by start()
             raise RuntimeError("fail")
 
     monkeypatch.setattr(server_module, "NotebookLMClient", ExplodingClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+
+    # Should NOT raise: the transport binds without touching the browser.
+    await server.start()
+
+    assert server.app.run_calls[-1] == {"transport": "stdio"}
+    # The client was never constructed because no tool was invoked.
+    assert server.client is None
+
+
+@pytest.mark.asyncio
+async def test_start_handles_transport_errors(monkeypatch):
+    """The ``start()`` error path now fires when the transport itself fails."""
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+
+    async def boom(**_kwargs):
+        raise RuntimeError("transport down")
+
+    server.app.run_async = boom
 
     with pytest.raises(NotebookLMError, match="Server startup failed"):
         await server.start()
@@ -137,7 +195,11 @@ async def test_start_handles_errors(monkeypatch):
 @pytest.mark.asyncio
 async def test_stop_closes_client(monkeypatch):
     monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    # engine="patchright" so the real _ensure_client builds the injectable
+    # DummyClient (not the RPC backend).
+    server = server_module.NotebookLMFastMCP(
+        ServerConfig(default_notebook_id="abc", engine="patchright")
+    )
     await server._ensure_client()
 
     await server.stop()
@@ -149,13 +211,28 @@ async def test_healthcheck_tool_reports_status(monkeypatch):
     monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
+    # No client -> unhealthy, not authenticated.
     result = await server.app.tools["healthcheck"]()
     assert result["status"] == "unhealthy"
+    assert result["authenticated"] is False
 
+    # Authenticated client -> healthy, and the payload reflects real config.
     dummy = DummyClient(server.config)
+    dummy._is_authenticated = True
     server.client = dummy
     result = await server.app.tools["healthcheck"]()
     assert result["status"] == "healthy"
+    assert result["authenticated"] is True
+    assert result["notebook_id"] == "abc"
+    # headless defaults to False -> gui mode (proves config.headless is read).
+    assert result["mode"] == "gui"
+
+    # Client present but NOT authenticated -> needs_auth (distinct from both
+    # the no-client and the healthy paths).
+    dummy._is_authenticated = False
+    result = await server.app.tools["healthcheck"]()
+    assert result["status"] == "needs_auth"
+    assert result["authenticated"] is False
 
 
 @pytest.mark.asyncio
@@ -166,7 +243,7 @@ async def test_send_chat_message_tool(monkeypatch):
     server.client = dummy
 
     async def fake_ensure(self):
-        return None
+        return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
     request = server_module.SendMessageRequest(message="hi", wait_for_response=True)
@@ -174,6 +251,14 @@ async def test_send_chat_message_tool(monkeypatch):
 
     assert dummy.sent_messages == ["hi"]
     assert response["status"] == "completed"
+    # The echoed message must be exactly what we sent (not a fixed string).
+    assert response["message"] == "hi"
+    # wait_for_response=True must surface the client's real response via
+    # get_response(); assert on the unique sentinel and the call ordering
+    # (send happens before get).
+    assert response["response"] == DUMMY_RESPONSE
+    assert dummy.get_response_calls == 1
+    assert dummy.call_order == ["send", "get"]
 
 
 @pytest.mark.asyncio
@@ -184,7 +269,7 @@ async def test_send_chat_message_tool_no_wait(monkeypatch):
     server.client = dummy
 
     async def fake_ensure(self):
-        return None
+        return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
     request = server_module.SendMessageRequest(message="hi", wait_for_response=False)
@@ -192,6 +277,11 @@ async def test_send_chat_message_tool_no_wait(monkeypatch):
 
     assert response["status"] == "sent"
     assert "response" not in response
+    # wait_for_response=False must NOT call get_response: the message is sent
+    # but the server returns without reading a reply.
+    assert dummy.sent_messages == ["hi"]
+    assert dummy.get_response_calls == 0
+    assert dummy.call_order == ["send"]
 
 
 @pytest.mark.asyncio
@@ -205,7 +295,7 @@ async def test_send_chat_message_tool_error(monkeypatch):
     server.client = FailingClient(server.config)
 
     async def fake_ensure(self):
-        return None
+        return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
     request = server_module.SendMessageRequest(message="hi", wait_for_response=False)
@@ -222,7 +312,7 @@ async def test_chat_with_notebook_tool(monkeypatch):
     server.client = dummy
 
     async def fake_ensure(self):
-        return None
+        return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
     request = server_module.ChatRequest(message="hello", notebook_id="xyz")
@@ -231,6 +321,35 @@ async def test_chat_with_notebook_tool(monkeypatch):
     assert dummy.sent_messages == ["hello"]
     assert dummy.navigated_to == ["xyz"]
     assert response["notebook_id"] == "xyz"
+    # Full orchestration contract: when a notebook_id is given the server must
+    # navigate FIRST, then send, then read the response — in that exact order.
+    assert dummy.call_order == ["navigate", "send", "get"]
+    assert response["response"] == DUMMY_RESPONSE
+    assert response["message"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_chat_with_notebook_no_navigation_when_id_absent(monkeypatch):
+    """When no notebook_id is supplied the server must skip navigation and
+    fall back to the configured default notebook id in its response."""
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    dummy = DummyClient(server.config)
+    server.client = dummy
+
+    async def fake_ensure(self):
+        return self.client
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    request = server_module.ChatRequest(message="hello", notebook_id=None)
+    response = await server.app.tools["chat_with_notebook"](request)
+
+    # No navigation happened; only send + read.
+    assert dummy.navigated_to == []
+    assert dummy.call_order == ["send", "get"]
+    # The response falls back to the server's configured default notebook.
+    assert response["notebook_id"] == "abc"
+    assert response["response"] == DUMMY_RESPONSE
 
 
 @pytest.mark.asyncio
@@ -241,7 +360,7 @@ async def test_get_chat_response_and_quick_response(monkeypatch):
     server.client = dummy
 
     async def fake_ensure(self):
-        return None
+        return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
     request = server_module.GetResponseRequest(timeout=1)
@@ -249,8 +368,14 @@ async def test_get_chat_response_and_quick_response(monkeypatch):
     chat_result = await server.app.tools["get_chat_response"](request)
     quick_result = await server.app.tools["get_quick_response"]()
 
-    assert chat_result["response"] == "response"
-    assert quick_result["response"] == "response"
+    # Assert on the unique sentinel: this proves the server surfaces the
+    # client's actual return value (not a hardcoded "response" string) and
+    # that each tool delegated to client.get_response().
+    assert chat_result["response"] == DUMMY_RESPONSE
+    assert quick_result["response"] == DUMMY_RESPONSE
+    assert chat_result["status"] == "success"
+    assert quick_result["status"] == "success"
+    assert dummy.get_response_calls == 2
 
 
 @pytest.mark.asyncio
@@ -264,7 +389,7 @@ async def test_get_chat_response_error(monkeypatch):
     server.client = FailingClient(server.config)
 
     async def fake_ensure(self):
-        return None
+        return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
     request = server_module.GetResponseRequest(timeout=1)
@@ -284,7 +409,7 @@ async def test_quick_response_error(monkeypatch):
     server.client = FailingClient(server.config)
 
     async def fake_ensure(self):
-        return None
+        return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
 
@@ -300,7 +425,7 @@ async def test_get_and_set_default_notebook_tools(monkeypatch):
     server.client = dummy
 
     async def fake_ensure(self):
-        return None
+        return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
 
@@ -310,7 +435,33 @@ async def test_get_and_set_default_notebook_tools(monkeypatch):
     request = server_module.SetNotebookRequest(notebook_id="new-id")
     set_result = await server.app.tools["set_default_notebook"](request)
     assert set_result["new_notebook_id"] == "new-id"
+    # The old id must be captured BEFORE the swap, proving the server records
+    # the transition rather than echoing the new value twice.
+    assert set_result["old_notebook_id"] == "abc"
     assert server.config.default_notebook_id == "new-id"
+
+
+@pytest.mark.asyncio
+async def test_chat_with_notebook_tool_error_wraps_exception(monkeypatch):
+    """A failure inside chat_with_notebook must be wrapped as NotebookLMError
+    (covers the error path, server.py 205-207)."""
+
+    class BadClient(DummyClient):
+        async def send_message(self, message):
+            raise RuntimeError("send blew up")
+
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
+    server.client = BadClient(server.config)
+
+    async def fake_ensure(self):
+        return self.client
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    request = server_module.ChatRequest(message="hello", notebook_id=None)
+
+    with pytest.raises(NotebookLMError, match="Chat interaction failed"):
+        await server.app.tools["chat_with_notebook"](request)
 
 
 @pytest.mark.asyncio
@@ -324,7 +475,7 @@ async def test_navigate_to_notebook_tool_error(monkeypatch):
     server.client = BadClient(server.config)
 
     async def fake_ensure(self):
-        return None
+        return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
     request = server_module.NavigateRequest(notebook_id="xyz")
@@ -388,7 +539,7 @@ async def test_navigate_to_notebook_tool_success(monkeypatch):
     server.client = dummy
 
     async def fake_ensure(self):
-        return None
+        return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
     request = server_module.NavigateRequest(notebook_id="xyz")
@@ -504,3 +655,352 @@ async def test_main_handles_general_exception(monkeypatch):
 
     assert exc.value.code == 1
     assert any("Server error" in message for message in logs)
+
+
+# --------------------------------------------------------------------------- #
+# Notebook / source management tools (RPC engine) + the management guard.
+# --------------------------------------------------------------------------- #
+# Unique sentinels so the management-tool assertions test real wiring (the
+# server surfacing the client's value) rather than echoing a hardcoded payload.
+NB_LIST = [{"id": "nb1", "title": "First", "emoji": "📓", "source_count": 2}]
+NB_OBJ = {"id": "nb1", "title": "First", "emoji": "📓", "source_count": 2}
+SRC_LIST = [{"id": "s1", "title": "Src", "type": "pdf", "status": "ready"}]
+SRC_OBJ = {"id": "s1", "title": "Src", "type": "pdf", "status": "ready"}
+SUMMARY = "an-ai-generated-summary-3b8f"
+
+
+class ManagementClient(DummyClient):
+    """An RPC-style client that supports management. Records every call."""
+
+    supports_management = True
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.management_calls: list[tuple] = []
+
+    async def list_notebooks(self):
+        self.management_calls.append(("list_notebooks",))
+        return NB_LIST
+
+    async def create_notebook(self, title):
+        self.management_calls.append(("create_notebook", title))
+        return NB_OBJ
+
+    async def rename_notebook(self, notebook_id, new_title):
+        self.management_calls.append(("rename_notebook", notebook_id, new_title))
+        return NB_OBJ
+
+    async def delete_notebook(self, notebook_id):
+        self.management_calls.append(("delete_notebook", notebook_id))
+
+    async def get_notebook_summary(self, notebook_id):
+        self.management_calls.append(("get_notebook_summary", notebook_id))
+        return SUMMARY
+
+    async def list_sources(self, notebook_id):
+        self.management_calls.append(("list_sources", notebook_id))
+        return SRC_LIST
+
+    async def add_source_url(self, notebook_id, url):
+        self.management_calls.append(("add_source_url", notebook_id, url))
+        return SRC_OBJ
+
+    async def add_source_text(self, notebook_id, title, text):
+        self.management_calls.append(("add_source_text", notebook_id, title, text))
+        return SRC_OBJ
+
+    async def delete_source(self, notebook_id, source_id):
+        self.management_calls.append(("delete_source", notebook_id, source_id))
+
+
+def _management_server(monkeypatch, client_cls=ManagementClient):
+    """A server with an RPC config and a management-capable client wired in,
+    with ``_ensure_client`` stubbed to that client (no real init)."""
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    config = ServerConfig(default_notebook_id="abc", engine="rpc")
+    server = server_module.NotebookLMFastMCP(config)
+    client = client_cls(config)
+    server.client = client
+
+    async def fake_ensure(self):
+        return self.client
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    return server, client
+
+
+def test_management_tools_registered(monkeypatch):
+    """All 9 management tools must be registered on the app."""
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(
+        ServerConfig(default_notebook_id="abc", engine="rpc")
+    )
+    expected = {
+        "list_notebooks",
+        "create_notebook",
+        "rename_notebook",
+        "delete_notebook",
+        "get_notebook_summary",
+        "list_sources",
+        "add_source_url",
+        "add_source_text",
+        "delete_source",
+    }
+    assert expected.issubset(server.app.tools.keys())
+
+
+@pytest.mark.asyncio
+async def test_list_notebooks_tool(monkeypatch):
+    server, client = _management_server(monkeypatch)
+    result = await server.app.tools["list_notebooks"]()
+    assert result["status"] == "success"
+    assert result["count"] == 1
+    # Surfaces the client's actual list (not a hardcoded payload).
+    assert result["notebooks"] == NB_LIST
+    assert client.management_calls == [("list_notebooks",)]
+
+
+@pytest.mark.asyncio
+async def test_create_notebook_tool(monkeypatch):
+    server, client = _management_server(monkeypatch)
+    request = server_module.CreateNotebookRequest(title="My NB")
+    result = await server.app.tools["create_notebook"](request)
+    assert result["status"] == "success"
+    assert result["notebook"] == NB_OBJ
+    # The title flowed through to the client unchanged.
+    assert client.management_calls == [("create_notebook", "My NB")]
+
+
+@pytest.mark.asyncio
+async def test_rename_notebook_tool(monkeypatch):
+    server, client = _management_server(monkeypatch)
+    request = server_module.RenameNotebookRequest(
+        notebook_id="nb1", new_title="Renamed"
+    )
+    result = await server.app.tools["rename_notebook"](request)
+    assert result["notebook"] == NB_OBJ
+    assert client.management_calls == [("rename_notebook", "nb1", "Renamed")]
+
+
+@pytest.mark.asyncio
+async def test_delete_notebook_tool(monkeypatch):
+    server, client = _management_server(monkeypatch)
+    request = server_module.NotebookIdRequest(notebook_id="nb1")
+    result = await server.app.tools["delete_notebook"](request)
+    assert result["status"] == "success"
+    assert result["notebook_id"] == "nb1"
+    assert client.management_calls == [("delete_notebook", "nb1")]
+
+
+@pytest.mark.asyncio
+async def test_get_notebook_summary_tool(monkeypatch):
+    server, client = _management_server(monkeypatch)
+    request = server_module.NotebookIdRequest(notebook_id="nb1")
+    result = await server.app.tools["get_notebook_summary"](request)
+    # Surfaces the client's unique summary string.
+    assert result["summary"] == SUMMARY
+    assert client.management_calls == [("get_notebook_summary", "nb1")]
+
+
+@pytest.mark.asyncio
+async def test_list_sources_tool(monkeypatch):
+    server, client = _management_server(monkeypatch)
+    request = server_module.NotebookIdRequest(notebook_id="nb1")
+    result = await server.app.tools["list_sources"](request)
+    assert result["count"] == 1
+    assert result["sources"] == SRC_LIST
+    assert client.management_calls == [("list_sources", "nb1")]
+
+
+@pytest.mark.asyncio
+async def test_add_source_url_tool(monkeypatch):
+    server, client = _management_server(monkeypatch)
+    request = server_module.AddSourceUrlRequest(
+        notebook_id="nb1", url="https://example.com"
+    )
+    result = await server.app.tools["add_source_url"](request)
+    assert result["source"] == SRC_OBJ
+    assert client.management_calls == [("add_source_url", "nb1", "https://example.com")]
+
+
+@pytest.mark.asyncio
+async def test_add_source_text_tool(monkeypatch):
+    server, client = _management_server(monkeypatch)
+    request = server_module.AddSourceTextRequest(
+        notebook_id="nb1", title="T", text="body"
+    )
+    result = await server.app.tools["add_source_text"](request)
+    assert result["source"] == SRC_OBJ
+    assert client.management_calls == [("add_source_text", "nb1", "T", "body")]
+
+
+@pytest.mark.asyncio
+async def test_delete_source_tool(monkeypatch):
+    server, client = _management_server(monkeypatch)
+    request = server_module.DeleteSourceRequest(notebook_id="nb1", source_id="s1")
+    result = await server.app.tools["delete_source"](request)
+    assert result["status"] == "success"
+    assert result["notebook_id"] == "nb1"
+    assert result["source_id"] == "s1"
+    assert client.management_calls == [("delete_source", "nb1", "s1")]
+
+
+@pytest.mark.asyncio
+async def test_management_tool_wraps_client_error(monkeypatch):
+    """A failure inside a management method is wrapped as NotebookLMError."""
+
+    class FailingMgmt(ManagementClient):
+        async def list_notebooks(self):
+            raise RuntimeError("rpc down")
+
+    server, _ = _management_server(monkeypatch, client_cls=FailingMgmt)
+    with pytest.raises(NotebookLMError, match="Failed to list notebooks"):
+        await server.app.tools["list_notebooks"]()
+
+
+# --------------------------------------------------------------------------- #
+# _require_management guard
+# --------------------------------------------------------------------------- #
+class NonManagementClient(DummyClient):
+    """A patchright-style client that does NOT support management."""
+
+    supports_management = False
+
+
+@pytest.mark.parametrize(
+    "tool_name,request_factory",
+    [
+        ("list_notebooks", lambda m: None),
+        ("create_notebook", lambda m: m.CreateNotebookRequest(title="t")),
+        (
+            "rename_notebook",
+            lambda m: m.RenameNotebookRequest(notebook_id="n", new_title="t"),
+        ),
+        ("delete_notebook", lambda m: m.NotebookIdRequest(notebook_id="n")),
+        ("get_notebook_summary", lambda m: m.NotebookIdRequest(notebook_id="n")),
+        ("list_sources", lambda m: m.NotebookIdRequest(notebook_id="n")),
+        (
+            "add_source_url",
+            lambda m: m.AddSourceUrlRequest(notebook_id="n", url="u"),
+        ),
+        (
+            "add_source_text",
+            lambda m: m.AddSourceTextRequest(notebook_id="n", title="t", text="x"),
+        ),
+        (
+            "delete_source",
+            lambda m: m.DeleteSourceRequest(notebook_id="n", source_id="s"),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_management_guard_rejects_non_management_engine(
+    monkeypatch, tool_name, request_factory
+):
+    """Every management tool must raise NotebookLMError mentioning the 'rpc'
+    engine when the active client does not support management."""
+    monkeypatch.setattr(server_module, "NotebookLMClient", NonManagementClient)
+    config = ServerConfig(default_notebook_id="abc", engine="patchright")
+    server = server_module.NotebookLMFastMCP(config)
+    server.client = NonManagementClient(config)
+
+    async def fake_ensure(self):
+        return self.client
+
+    server._ensure_client = MethodType(fake_ensure, server)
+
+    tool = server.app.tools[tool_name]
+    request = request_factory(server_module)
+    with pytest.raises(NotebookLMError, match="rpc"):
+        if request is None:
+            await tool()
+        else:
+            await tool(request)
+
+
+@pytest.mark.asyncio
+async def test_require_management_passes_for_rpc_client(monkeypatch):
+    """_require_management returns the client when it supports management."""
+    server, client = _management_server(monkeypatch)
+    assert server._require_management() is client
+
+
+def test_require_management_raises_when_no_client(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(
+        ServerConfig(default_notebook_id="abc", engine="rpc")
+    )
+    server.client = None
+    with pytest.raises(NotebookLMError, match="rpc"):
+        server._require_management()
+
+
+# --------------------------------------------------------------------------- #
+# _build_client engine dispatch
+# --------------------------------------------------------------------------- #
+def test_build_client_patchright_uses_injectable_symbol(monkeypatch):
+    """engine='patchright' must construct the module-level NotebookLMClient
+    (the injectable symbol), passing the config through."""
+    built = []
+
+    class MarkerClient:
+        def __init__(self, config):
+            built.append(config)
+
+    monkeypatch.setattr(server_module, "NotebookLMClient", MarkerClient)
+    config = ServerConfig(default_notebook_id="abc", engine="patchright")
+    server = server_module.NotebookLMFastMCP(config)
+
+    client = server._build_client()
+    assert isinstance(client, MarkerClient)
+    assert built == [config]
+
+
+def test_build_client_rpc_constructs_rpc_client(monkeypatch):
+    """engine='rpc' must construct a NotebookLMRPCClient (patched so no real
+    backend is built), passing the config through."""
+    import notebooklm_mcp.client_rpc as client_rpc_module
+
+    built = []
+
+    class MarkerRPCClient:
+        supports_management = True
+
+        def __init__(self, config):
+            built.append(config)
+
+    monkeypatch.setattr(client_rpc_module, "NotebookLMRPCClient", MarkerRPCClient)
+    # The patchright branch symbol must NOT be used for engine='rpc'.
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    config = ServerConfig(default_notebook_id="abc", engine="rpc")
+    server = server_module.NotebookLMFastMCP(config)
+
+    client = server._build_client()
+    assert isinstance(client, MarkerRPCClient)
+    assert built == [config]
+
+
+def test_build_client_defaults_to_rpc_when_engine_missing(monkeypatch):
+    """When the config has no ``engine`` attribute at all, _build_client falls
+    back to the RPC engine (getattr default)."""
+    import notebooklm_mcp.client_rpc as client_rpc_module
+
+    built = []
+
+    class MarkerRPCClient:
+        supports_management = True
+
+        def __init__(self, config):
+            built.append(config)
+
+    monkeypatch.setattr(client_rpc_module, "NotebookLMRPCClient", MarkerRPCClient)
+    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+
+    config = ServerConfig(default_notebook_id="abc", engine="rpc")
+    server = server_module.NotebookLMFastMCP(config)
+    # Simulate an older config object missing the engine field.
+    delattr(server.config, "engine")
+
+    client = server._build_client()
+    assert isinstance(client, MarkerRPCClient)
+    assert built == [config]
