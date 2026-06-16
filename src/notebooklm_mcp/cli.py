@@ -6,8 +6,9 @@ import asyncio
 import json
 import re
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 import click
 from rich.console import Console
@@ -20,6 +21,26 @@ from .exceptions import ConfigurationError
 from .server import NotebookLMFastMCP
 
 console = Console()
+
+
+@asynccontextmanager
+async def _client_session(
+    config: ServerConfig,
+) -> AsyncIterator[NotebookLMRPCClient]:
+    """Start an RPC client and always close it (shared by chat/test)."""
+    client = NotebookLMRPCClient(config)
+    try:
+        await client.start()
+        yield client
+    finally:
+        await client.close()
+
+
+def _validated_copy(source: Path, dest: Path) -> None:
+    """Copy a profile dir after checking the source exists (import/export)."""
+    if not source.exists():
+        raise ConfigurationError(f"Source profile not found: {source}")
+    _copy_tree(source, dest)
 
 
 def extract_notebook_id(url: str) -> str:
@@ -63,28 +84,6 @@ def create_default_config(
         json.dump(config, f, indent=2)
 
     console.print(f"✅ Created config file: [bold green]{config_path}[/bold green]")
-
-
-def update_config_to_headless(config_path: str = "notebooklm-config.json") -> None:
-    """Update config file to set headless=true after successful setup"""
-    try:
-        # Read current config
-        with open(config_path, "r") as f:
-            config = json.load(f)
-
-        # Update headless setting
-        config["headless"] = True
-
-        # Write back to file
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
-
-        console.print(
-            "✅ Updated config: [bold yellow]headless=true[/bold yellow] for optimal performance"
-        )
-
-    except Exception as e:
-        console.print(f"⚠️  Failed to update config to headless mode: {e}")
 
 
 @click.group()
@@ -293,16 +292,9 @@ def chat(ctx: click.Context, notebook: Optional[str], message: Optional[str]) ->
         config.default_notebook_id = notebook
 
     async def run_chat() -> None:
-        client = NotebookLMRPCClient(config)
-
-        try:
-            console.print("[yellow]Connecting...[/yellow]")
-            await client.start()
-
+        async with _client_session(config) as client:
             console.print("[yellow]Authenticating...[/yellow]")
-            auth_success = await client.authenticate()
-
-            if not auth_success:
+            if not await client.authenticate():
                 console.print(
                     "[red]Authentication failed. Run `uv run notebooklm login` "
                     "to create a session.[/red]"
@@ -341,9 +333,6 @@ def chat(ctx: click.Context, notebook: Optional[str], message: Optional[str]) ->
                         break
                     except Exception as e:
                         console.print(f"[red]Chat error: {e}[/red]")
-
-        finally:
-            await client.close()
 
     try:
         asyncio.run(run_chat())
@@ -413,18 +402,9 @@ def import_profile(ctx: click.Context, from_profile: str, to_profile: str) -> No
     """Import existing Chrome profile"""
 
     try:
-        from pathlib import Path
-
         source = Path(from_profile)
         dest = Path(to_profile)
-
-        if not source.exists():
-            raise ConfigurationError(f"Source profile not found: {source}")
-
-        if dest.exists():
-            console.print(f"[yellow]Removing existing profile: {dest}[/yellow]")
-
-        _copy_tree(source, dest)
+        _validated_copy(source, dest)
 
         console.print(
             Panel.fit(
@@ -455,15 +435,9 @@ def export_profile(ctx: click.Context, profile: Optional[str], to: str) -> None:
     source_profile = profile or config.auth.profile_dir
 
     try:
-        from pathlib import Path
-
         source = Path(source_profile)
         dest = Path(to)
-
-        if not source.exists():
-            raise ConfigurationError(f"Source profile not found: {source}")
-
-        _copy_tree(source, dest)
+        _validated_copy(source, dest)
 
         console.print(
             Panel.fit(
@@ -510,34 +484,26 @@ def test(ctx: click.Context, notebook: str) -> None:
     config.default_notebook_id = notebook
 
     async def run_test() -> None:
-        client = NotebookLMRPCClient(config)
+        async with _client_session(config) as client:
+            try:
+                console.print("✅ Connected successfully")
 
-        try:
-            console.print("[yellow]Connecting...[/yellow]")
-            await client.start()
-            console.print("✅ Connected successfully")
+                console.print("[yellow]Testing authentication...[/yellow]")
+                if await client.authenticate():
+                    console.print("✅ Authentication successful")
+                else:
+                    console.print(
+                        "⚠️  Authentication required - run `uv run notebooklm login`"
+                    )
 
-            console.print("[yellow]Testing authentication...[/yellow]")
-            auth_success = await client.authenticate()
+                console.print("[yellow]Testing notebook navigation...[/yellow]")
+                url = await client.navigate_to_notebook(notebook)
+                console.print(f"✅ Navigated to: {url}")
 
-            if auth_success:
-                console.print("✅ Authentication successful")
-            else:
-                console.print(
-                    "⚠️  Authentication required - run `uv run notebooklm login`"
-                )
-
-            console.print("[yellow]Testing notebook navigation...[/yellow]")
-            url = await client.navigate_to_notebook(notebook)
-            console.print(f"✅ Navigated to: {url}")
-
-            console.print("[green]All tests passed![/green]")
-
-        except Exception as e:
-            console.print(f"[red]Test failed: {e}[/red]")
-            raise
-        finally:
-            await client.close()
+                console.print("[green]All tests passed![/green]")
+            except Exception as e:
+                console.print(f"[red]Test failed: {e}[/red]")
+                raise
 
     try:
         asyncio.run(run_test())

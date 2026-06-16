@@ -171,32 +171,6 @@ def test_create_default_config_writes_valid_json(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# update_config_to_headless  (pure logic, real temp file)
-# --------------------------------------------------------------------------- #
-
-
-def test_update_config_to_headless_flips_true(tmp_path):
-    path = tmp_path / "cfg.json"
-    path.write_text(json.dumps({"headless": False, "default_notebook_id": "x"}))
-
-    cli_module.update_config_to_headless(str(path))
-
-    data = json.loads(path.read_text())
-    assert data["headless"] is True
-    # Existing keys preserved.
-    assert data["default_notebook_id"] == "x"
-
-
-def test_update_config_to_headless_missing_file_is_graceful(tmp_path, capsys):
-    # No file present -> must NOT raise; emits a warning instead.
-    missing = tmp_path / "does-not-exist.json"
-    cli_module.update_config_to_headless(str(missing))
-    out = capsys.readouterr().out
-    assert "Failed to update config" in out
-    assert not missing.exists()
-
-
-# --------------------------------------------------------------------------- #
 # cli group wiring
 # --------------------------------------------------------------------------- #
 
