@@ -6,16 +6,24 @@ Modern MCP server implementation using FastMCP v2 framework
 
 import asyncio
 import functools
-from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 
 from fastmcp import FastMCP
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from .client_rpc import NotebookLMRPCClient
 from .config import ServerConfig
 from .exceptions import NotebookLMError
 
 _T = TypeVar("_T")
+
+
+class SourceRef(BaseModel):
+    """A reference to a source living in some notebook (for copy/merge)."""
+
+    notebook_id: str = Field(..., description="Notebook that holds the source")
+    source_id: str = Field(..., description="ID of the source to copy")
 
 
 def _tool(
@@ -270,6 +278,35 @@ class NotebookLMFastMCP:
                 "notebook_id": notebook_id,
                 "source_id": source_id,
             }
+
+        @self.app.tool()
+        @_tool("Failed to copy source")
+        async def copy_source(
+            source_notebook_id: str, source_id: str, target_notebook_id: str
+        ) -> Dict[str, Any]:
+            """Copy a single source from one notebook into another."""
+            client = await self._ensure_client()
+            source = await client.copy_source(
+                source_notebook_id, source_id, target_notebook_id
+            )
+            return {"status": "success", "source": source}
+
+        @self.app.tool()
+        @_tool("Failed to create notebook from sources")
+        async def create_notebook_from_sources(
+            title: str, sources: List[SourceRef]
+        ) -> Dict[str, Any]:
+            """Create a new notebook composed of sources copied from other
+            notebooks (merge sources across notebooks).
+
+            Each item in ``sources`` is ``{notebook_id, source_id}``. Sources are
+            copied by URL when available, else by re-adding their extracted text.
+            Add more sources afterwards with ``add_source_url``/``add_source_text``.
+            """
+            client = await self._ensure_client()
+            refs = [s.model_dump() for s in sources]
+            result = await client.create_notebook_from_sources(title, refs)
+            return {"status": "success", **result}
 
     async def start(
         self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000

@@ -202,6 +202,56 @@ class NotebookLMRPCClient:
         await backend.sources.delete(notebook_id, source_id)
 
     # ------------------------------------------------------------------ #
+    # Compose: copy/merge sources across notebooks
+    # ------------------------------------------------------------------ #
+    async def copy_source(
+        self, from_notebook_id: str, source_id: str, to_notebook_id: str
+    ) -> Dict[str, Any]:
+        """Copy one source into another notebook.
+
+        Web sources (which carry a ``url``) are re-added by URL; sources without
+        a URL (e.g. pasted text or uploads) are re-added as text from their
+        extracted full-text content.
+        """
+        backend = self._require_backend()
+        src = await backend.sources.get(from_notebook_id, source_id)
+        if src is None:
+            raise NavigationError(
+                f"Source {source_id} not found in notebook {from_notebook_id}"
+            )
+        url = getattr(src, "url", None)
+        if url:
+            new = await backend.sources.add_url(to_notebook_id, url)
+        else:
+            full = await backend.sources.get_fulltext(from_notebook_id, source_id)
+            title = getattr(src, "title", None) or getattr(full, "title", "Untitled")
+            content = getattr(full, "content", "") or ""
+            new = await backend.sources.add_text(to_notebook_id, title, content)
+        return _source_dict(new)
+
+    async def create_notebook_from_sources(
+        self, title: str, source_refs: List[Dict[str, str]]
+    ) -> Dict[str, Any]:
+        """Create a notebook and copy in sources picked from other notebooks.
+
+        ``source_refs`` is a list of ``{"notebook_id", "source_id"}``. Returns
+        the new notebook plus the per-source ``copied`` / ``failed`` outcome, so
+        one bad source never aborts the whole merge.
+        """
+        notebook = await self.create_notebook(title)
+        new_id = notebook["id"]
+        copied: List[Dict[str, Any]] = []
+        failed: List[Dict[str, Any]] = []
+        for ref in source_refs:
+            try:
+                copied.append(
+                    await self.copy_source(ref["notebook_id"], ref["source_id"], new_id)
+                )
+            except Exception as exc:  # noqa: BLE001 - report, don't abort the merge
+                failed.append({**ref, "error": str(exc)})
+        return {"notebook": notebook, "copied": copied, "failed": failed}
+
+    # ------------------------------------------------------------------ #
     # Helpers
     # ------------------------------------------------------------------ #
     def _require_backend(self) -> Any:

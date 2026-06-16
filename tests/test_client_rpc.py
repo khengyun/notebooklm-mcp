@@ -50,10 +50,16 @@ class _Backend:
         ask_result=None,
         list_error=None,
         ask_error=None,
+        source_get=None,
+        fulltext=None,
     ):
         self.calls: list[tuple] = []
         self._notebooks_data = list(notebooks) if notebooks is not None else []
         self._sources_data = list(sources) if sources is not None else []
+        # source_id -> Source object (for sources.get), and source_id ->
+        # SourceFulltext object (for sources.get_fulltext), used by copy_source.
+        self._source_get = dict(source_get) if source_get else {}
+        self._fulltext = dict(fulltext) if fulltext else {}
         self.summary = summary
         self.ask_result = (
             ask_result
@@ -115,6 +121,14 @@ class _SourcesAPI:
     async def delete(self, notebook_id, source_id):
         self._b.calls.append(("sources.delete", notebook_id, source_id))
         return None
+
+    async def get(self, notebook_id, source_id):
+        self._b.calls.append(("sources.get", notebook_id, source_id))
+        return self._b._source_get.get(source_id)
+
+    async def get_fulltext(self, notebook_id, source_id):
+        self._b.calls.append(("sources.get_fulltext", notebook_id, source_id))
+        return self._b._fulltext.get(source_id)
 
 
 class _ChatAPI:
@@ -628,3 +642,90 @@ def test_close_is_idempotent_without_backend(tmp_path):
     asyncio.run(client.close())
     assert client._backend is None
     assert client._cm is None
+
+
+# --------------------------------------------------------------------------- #
+# Compose: copy_source / create_notebook_from_sources
+# --------------------------------------------------------------------------- #
+def test_copy_source_with_url_readds_by_url(monkeypatch, tmp_path):
+    # A source carrying a URL is copied via sources.add_url (no fulltext needed).
+    src = SimpleNamespace(id="s1", title="Doc", url="https://example.com/p.pdf")
+    backend = _Backend(source_get={"s1": src})
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(client.copy_source("nbA", "s1", "nbB"))
+
+    assert ("sources.get", "nbA", "s1") in backend.calls
+    assert ("sources.add_url", "nbB", "https://example.com/p.pdf") in backend.calls
+    # Must NOT fall back to fulltext when a URL is present.
+    assert not any(c[0] == "sources.get_fulltext" for c in backend.calls)
+    assert result["id"] == "src-url"
+
+
+def test_copy_source_without_url_readds_text_from_fulltext(monkeypatch, tmp_path):
+    # A URL-less source is copied by re-adding its extracted full-text content.
+    src = SimpleNamespace(id="s2", title="Note", url=None)
+    full = SimpleNamespace(title="Note", content="the body text")
+    backend = _Backend(source_get={"s2": src}, fulltext={"s2": full})
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(client.copy_source("nbA", "s2", "nbB"))
+
+    assert ("sources.get_fulltext", "nbA", "s2") in backend.calls
+    assert ("sources.add_text", "nbB", "Note", "the body text") in backend.calls
+    assert result["id"] == "src-text"
+
+
+def test_copy_source_missing_source_raises(monkeypatch, tmp_path):
+    backend = _Backend(source_get={})  # sources.get returns None
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+    with pytest.raises(NavigationError, match="not found"):
+        asyncio.run(client.copy_source("nbA", "missing", "nbB"))
+
+
+def test_create_notebook_from_sources_copies_all(monkeypatch, tmp_path):
+    s1 = SimpleNamespace(id="s1", title="A", url="https://a.com")
+    s2 = SimpleNamespace(id="s2", title="B", url="https://b.com")
+    backend = _Backend(source_get={"s1": s1, "s2": s2})
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(
+        client.create_notebook_from_sources(
+            "Merged",
+            [
+                {"notebook_id": "nb1", "source_id": "s1"},
+                {"notebook_id": "nb2", "source_id": "s2"},
+            ],
+        )
+    )
+
+    # A new notebook was created and both sources copied into it (nb-new).
+    assert ("notebooks.create", "Merged") in backend.calls
+    assert ("sources.add_url", "nb-new", "https://a.com") in backend.calls
+    assert ("sources.add_url", "nb-new", "https://b.com") in backend.calls
+    assert result["notebook"]["id"] == "nb-new"
+    assert len(result["copied"]) == 2
+    assert result["failed"] == []
+
+
+def test_create_notebook_from_sources_reports_partial_failure(monkeypatch, tmp_path):
+    # One good source, one missing: the merge must continue and report the bad
+    # one in `failed` rather than aborting.
+    s1 = SimpleNamespace(id="s1", title="A", url="https://a.com")
+    backend = _Backend(source_get={"s1": s1})  # "bad" not present -> raises
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(
+        client.create_notebook_from_sources(
+            "Merged",
+            [
+                {"notebook_id": "nb1", "source_id": "s1"},
+                {"notebook_id": "nb1", "source_id": "bad"},
+            ],
+        )
+    )
+
+    assert len(result["copied"]) == 1
+    assert len(result["failed"]) == 1
+    assert result["failed"][0]["source_id"] == "bad"
+    assert "error" in result["failed"][0]
