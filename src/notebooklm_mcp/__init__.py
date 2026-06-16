@@ -13,23 +13,22 @@ try:
     __version__ = _pkg_version("notebooklm-mcp")
 except PackageNotFoundError:  # pragma: no cover - source checkout without install
     __version__ = "0.0.0"
-__author__ = "NotebookLM MCP Team"
-__email__ = "support@notebooklm-mcp.dev"
+__author__ = "khengyun"
+__email__ = "78076796+khengyun@users.noreply.github.com"
 __description__ = (
     "FastMCP v2 server for NotebookLM automation with modern async support"
 )
 
-from .client import NotebookLMClient
+from .client_rpc import NotebookLMRPCClient
 from .config import AuthConfig, ServerConfig
-from .exceptions import AuthenticationError, NotebookLMError, StreamingError
+from .exceptions import AuthenticationError, NotebookLMError
 from .server import NotebookLMFastMCP
 
 __all__ = [
     "NotebookLMFastMCP",
-    "NotebookLMClient",
+    "NotebookLMRPCClient",
     "ServerConfig",
     "AuthConfig",
     "NotebookLMError",
     "AuthenticationError",
-    "StreamingError",
 ]

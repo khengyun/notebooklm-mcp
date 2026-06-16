@@ -9,10 +9,10 @@ description = "FastMCP v2 server for NotebookLM automation with modern async sup
 readme = "README.md"
 license = "MIT"
 authors = [
-    {name = "NotebookLM MCP Team", email = "support@notebooklm-mcp.dev"}
+    {name = "khengyun", email = "78076796+khengyun@users.noreply.github.com"}
 ]
 maintainers = [
-    {name = "NotebookLM MCP Team", email = "support@notebooklm-mcp.dev"}
+    {name = "khengyun", email = "78076796+khengyun@users.noreply.github.com"}
 ]
 keywords = ["fastmcp", "mcp", "notebooklm", "automation", "ai", "llm", "fastmcp-v2"]
 classifiers = [
@@ -31,12 +31,10 @@ requires-python = ">=3.10"
 dependencies = [
     # Core FastMCP v2 framework
     "fastmcp>=2.0.0",
-    # RPC engine (default) — notebooklm-py drives NotebookLM's internal
-    # batchexecute API for fast, full notebook/source management.
-    "notebooklm-py>=0.7",
-    # Browser engine — Patchright (undetected Playwright); used to bootstrap
-    # the login session (storage_state) and as the alternative chat engine.
-    "patchright>=1.60.1",
+    # RPC engine — notebooklm-py drives NotebookLM's internal batchexecute API
+    # for fast, full notebook/source management. The [browser] extra provides
+    # the `notebooklm login` CLI used to create the auth session (storage_state).
+    "notebooklm-py[browser]>=0.7",
     # Async support
     "anyio>=4.4.0",
     "trio>=0.26.0",
@@ -108,11 +106,11 @@ conflicts = []
 # fastmcp = { git = "https://github.com/jlowin/fastmcp", branch = "main" }
 
 [project.urls]
-Homepage = "https://github.com/notebooklm-mcp/notebooklm-mcp"
-Documentation = "https://notebooklm-mcp.readthedocs.io"
-Repository = "https://github.com/notebooklm-mcp/notebooklm-mcp"
-Issues = "https://github.com/notebooklm-mcp/notebooklm-mcp/issues"
-Changelog = "https://github.com/notebooklm-mcp/notebooklm-mcp/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/khengyun/notebooklm-mcp"
+Documentation = "https://github.com/khengyun/notebooklm-mcp#readme"
+Repository = "https://github.com/khengyun/notebooklm-mcp"
+Issues = "https://github.com/khengyun/notebooklm-mcp/issues"
+Changelog = "https://github.com/khengyun/notebooklm-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 notebooklm-mcp = "notebooklm_mcp.cli:main"
@@ -170,7 +168,7 @@ strict_equality = true
 
 [[tool.mypy.overrides]]
 module = [
-    "patchright.*",
+    "notebooklm.*",
     "mcp.*",
     "loguru.*",
 ]

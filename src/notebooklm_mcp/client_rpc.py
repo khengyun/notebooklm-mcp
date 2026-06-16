@@ -1,18 +1,19 @@
 """RPC engine: a NotebookLM client backed by ``notebooklm-py`` (batchexecute).
 
-This is the primary engine. It speaks NotebookLM's internal RPC API instead of
+This is the only engine. It speaks NotebookLM's internal RPC API instead of
 driving the DOM, which makes it fast and — crucially — gives full **notebook
 and source management** (list/create/delete/rename notebooks, add/delete
-sources) that the browser engine cannot do.
+sources).
 
-It implements the same lifecycle/chat surface as
-:class:`notebooklm_mcp.client.NotebookLMClient` (``start``/``authenticate``/
-``send_message``/``get_response``/``navigate_to_notebook``/``close``) so the
-MCP server and CLI use it interchangeably, and adds management methods on top.
+It exposes the lifecycle/chat surface (``start``/``authenticate``/
+``send_message``/``get_response``/``navigate_to_notebook``/``close``) used by
+the MCP server and CLI, and adds management methods on top.
 
-Auth: the browser profile is used only to bootstrap a Playwright
-``storage_state`` (see :mod:`notebooklm_mcp.auth_bridge`); all actions go
-through the RPC backend.
+Auth: notebooklm-py owns the session. A ``storage_state`` JSON (created with
+``notebooklm login``) is discovered from config (``auth.storage_state_path`` or
+a ``storage_state.json`` in the profile dir) or from notebooklm-py's own
+defaults (``NOTEBOOKLM_AUTH_JSON`` env / ``~/.notebooklm/storage_state.json``).
+This module never launches a browser.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from .config import ServerConfig
-from .exceptions import ChatError, NavigationError
+from .exceptions import AuthenticationError, ChatError, NavigationError
 
 
 def _backend_class() -> Any:
@@ -66,12 +67,6 @@ class NotebookLMRPCClient:
         self._cm: Optional[Any] = None
         self._last_answer = ""
 
-    # The RPC engine has no browser page; ``driver`` stays None so the legacy
-    # health check reports "not_started" rather than crashing.
-    @property
-    def driver(self) -> None:
-        return None
-
     @property
     def is_authenticated(self) -> bool:
         return self._is_authenticated
@@ -80,28 +75,49 @@ class NotebookLMRPCClient:
     # Lifecycle
     # ------------------------------------------------------------------ #
     async def start(self) -> None:
-        """Open the RPC backend using a bootstrapped storage_state. Idempotent."""
+        """Open the RPC backend from a notebooklm-py session. Idempotent.
+
+        The session is resolved (no browser) and handed to
+        ``backend.from_storage``. If no session exists anywhere, entering the
+        backend context raises and we surface a clear ``AuthenticationError``
+        telling the user to run ``notebooklm login``.
+        """
         if self._backend is not None:
             return
-        storage = await self._resolve_storage_state()
+        storage = self._resolve_storage_state()
         backend_cls = _backend_class()
-        self._cm = backend_cls.from_storage(path=str(storage))
-        self._backend = await self._cm.__aenter__()
+        if storage is not None:
+            self._cm = backend_cls.from_storage(path=str(storage))
+        else:
+            # No path: notebooklm-py discovers NOTEBOOKLM_AUTH_JSON or
+            # ~/.notebooklm/storage_state.json on its own.
+            self._cm = backend_cls.from_storage()
+        try:
+            self._backend = await self._cm.__aenter__()
+        except Exception as exc:
+            self._cm = None
+            raise AuthenticationError(
+                "No NotebookLM session found. Run `notebooklm login` or set "
+                "auth.storage_state_path."
+            ) from exc
         logger.info("RPC engine (notebooklm-py) started")
 
-    async def _resolve_storage_state(self) -> Path:
+    def _resolve_storage_state(self) -> Optional[Path]:
+        """Locate a storage_state file, or ``None`` to defer to notebooklm-py.
+
+        Order: explicit ``auth.storage_state_path`` (if it exists), then a
+        ``storage_state.json`` in ``auth.profile_dir`` (if it exists), else
+        ``None`` so notebooklm-py uses its own discovery.
+        """
         explicit = self.config.auth.storage_state_path
         if explicit:
             p = Path(explicit).expanduser()
             if p.exists():
                 return p
-        from .auth_bridge import default_storage_state_path, export_storage_state
-
-        target = default_storage_state_path(self.config)
-        if target.exists():
-            return target
-        # Bootstrap from the persistent browser profile (one-time login reuse).
-        return await export_storage_state(self.config, target)
+        default = Path(self.config.auth.profile_dir).expanduser() / "storage_state.json"
+        if default.exists():
+            return default
+        return None
 
     async def authenticate(self) -> bool:
         """Verify the session by issuing a cheap RPC (list notebooks)."""

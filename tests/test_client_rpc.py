@@ -17,14 +17,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from notebooklm_mcp import auth_bridge, client_rpc
+from notebooklm_mcp import client_rpc
 from notebooklm_mcp.client_rpc import (
     NotebookLMRPCClient,
     _notebook_dict,
     _source_dict,
 )
 from notebooklm_mcp.config import AuthConfig, ServerConfig
-from notebooklm_mcp.exceptions import ChatError, NavigationError
+from notebooklm_mcp.exceptions import AuthenticationError, ChatError, NavigationError
 
 
 # --------------------------------------------------------------------------- #
@@ -129,16 +129,23 @@ class _ChatAPI:
 
 
 class _StorageCM:
-    """Async context manager returned by ``from_storage(path=...)``."""
+    """Async context manager returned by ``from_storage(...)``.
 
-    def __init__(self, backend, opened_paths):
+    ``enter_error`` (when set) is raised from ``__aenter__`` to model
+    notebooklm-py rejecting a missing/invalid session.
+    """
+
+    def __init__(self, backend, opened_paths, enter_error=None):
         self._backend = backend
         self._opened_paths = opened_paths
+        self._enter_error = enter_error
         self.entered = False
         self.exited = False
 
     async def __aenter__(self):
         self.entered = True
+        if self._enter_error is not None:
+            raise self._enter_error
         return self._backend
 
     async def __aexit__(self, exc_type, exc, tb):
@@ -146,19 +153,24 @@ class _StorageCM:
         return False
 
 
-def make_backend_class(backend, opened_paths):
-    """Return a fake backend class whose ``from_storage`` yields ``backend``."""
+def make_backend_class(backend, opened_paths, enter_error=None):
+    """Return a fake backend class whose ``from_storage`` yields ``backend``.
+
+    ``from_storage`` accepts an optional ``path`` (the new resolver may call it
+    with no argument so notebooklm-py uses its own discovery). The path actually
+    passed (or ``None``) is recorded in ``opened_paths``.
+    """
 
     class _FakeBackendClass:
         @classmethod
-        def from_storage(cls, path):
+        def from_storage(cls, path=None):
             opened_paths.append(path)
-            return _StorageCM(backend, opened_paths)
+            return _StorageCM(backend, opened_paths, enter_error=enter_error)
 
     return _FakeBackendClass
 
 
-def install_backend(monkeypatch, backend):
+def install_backend(monkeypatch, backend, enter_error=None):
     """Patch ``_backend_class`` to hand out a fake class wrapping ``backend``.
 
     Returns the list of paths ``from_storage`` was called with, so tests can
@@ -168,7 +180,7 @@ def install_backend(monkeypatch, backend):
     monkeypatch.setattr(
         client_rpc,
         "_backend_class",
-        lambda: make_backend_class(backend, opened_paths),
+        lambda: make_backend_class(backend, opened_paths, enter_error=enter_error),
     )
     return opened_paths
 
@@ -176,7 +188,7 @@ def install_backend(monkeypatch, backend):
 def make_config(tmp_path, **overrides):
     """A ServerConfig whose profile_dir is an isolated tmp dir."""
     auth = AuthConfig(profile_dir=str(tmp_path / "profile"))
-    cfg = ServerConfig(auth=auth, engine="rpc", **overrides)
+    cfg = ServerConfig(auth=auth, **overrides)
     return cfg
 
 
@@ -253,10 +265,9 @@ def test_supports_management_is_true():
     assert NotebookLMRPCClient.supports_management is True
 
 
-def test_driver_is_none_and_default_notebook_seeded():
-    cfg = ServerConfig(engine="rpc", default_notebook_id="seed")
+def test_default_notebook_seeded_and_unauthenticated():
+    cfg = ServerConfig(default_notebook_id="seed")
     client = NotebookLMRPCClient(cfg)
-    assert client.driver is None
     assert client.current_notebook_id == "seed"
     assert client.is_authenticated is False
 
@@ -290,82 +301,77 @@ def test_start_is_idempotent(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# _resolve_storage_state
+# _resolve_storage_state (no browser, no auth_bridge)
 # --------------------------------------------------------------------------- #
-def test_resolve_storage_state_explicit_existing(tmp_path, monkeypatch):
+def test_resolve_storage_state_explicit_existing(tmp_path):
+    # An explicit storage_state_path that exists is used directly.
     explicit = tmp_path / "explicit_state.json"
     explicit.write_text("{}")
     cfg = make_config(tmp_path)
     cfg.auth.storage_state_path = str(explicit)
     client = NotebookLMRPCClient(cfg)
 
-    resolved = asyncio.run(client._resolve_storage_state())
-    assert resolved == explicit
+    assert client._resolve_storage_state() == explicit
 
 
-def test_resolve_storage_state_explicit_missing_falls_through(tmp_path, monkeypatch):
-    # Explicit path that does NOT exist must be ignored; resolution then falls
-    # through to the default-path branch (which here exists).
-    missing = tmp_path / "nope.json"
+def test_resolve_storage_state_explicit_missing_falls_through_to_default(tmp_path):
+    # An explicit path that does NOT exist must be ignored; resolution then
+    # falls through to the default profile_dir/storage_state.json (here present).
     cfg = make_config(tmp_path)
-    cfg.auth.storage_state_path = str(missing)
-    # Make the default path exist so we land on the default branch, not bootstrap.
-    default_file = tmp_path / "default_state.json"
+    cfg.auth.storage_state_path = str(tmp_path / "nope.json")
+    default_file = tmp_path / "profile" / "storage_state.json"
+    default_file.parent.mkdir(parents=True, exist_ok=True)
     default_file.write_text("{}")
-    # _resolve_storage_state does `from .auth_bridge import default_storage_state_path`
-    # at call time, so patching the source module symbol is what takes effect.
-    monkeypatch.setattr(
-        auth_bridge, "default_storage_state_path", lambda _cfg: default_file
-    )
 
     client = NotebookLMRPCClient(cfg)
-    resolved = asyncio.run(client._resolve_storage_state())
-    assert resolved == default_file
+    assert client._resolve_storage_state() == default_file
 
 
-def test_resolve_storage_state_default_path_exists(tmp_path, monkeypatch):
-    default_file = tmp_path / "default_state.json"
+def test_resolve_storage_state_default_profile_file_exists(tmp_path):
+    # No explicit path: a storage_state.json inside profile_dir is used.
+    default_file = tmp_path / "profile" / "storage_state.json"
+    default_file.parent.mkdir(parents=True, exist_ok=True)
     default_file.write_text("{}")
-    monkeypatch.setattr(
-        auth_bridge, "default_storage_state_path", lambda _cfg: default_file
-    )
-
-    async def _should_not_run(*_a, **_k):  # pragma: no cover - must NOT be called
-        raise AssertionError("export_storage_state must not run when default exists")
-
-    monkeypatch.setattr(auth_bridge, "export_storage_state", _should_not_run)
 
     cfg = make_config(tmp_path)
     client = NotebookLMRPCClient(cfg)
-    resolved = asyncio.run(client._resolve_storage_state())
-    assert resolved == default_file
+    assert client._resolve_storage_state() == default_file
 
 
-def test_resolve_storage_state_bootstraps_when_missing(tmp_path, monkeypatch):
-    # No explicit path, default path does NOT exist -> must call
-    # export_storage_state (the one-time bootstrap) and return its result.
-    target = tmp_path / "profile" / "storage_state.json"
-    bootstrapped = tmp_path / "bootstrapped.json"
-    bootstrapped.write_text("{}")
-    monkeypatch.setattr(auth_bridge, "default_storage_state_path", lambda _cfg: target)
-
-    export_calls = []
-
-    async def fake_export(config, out_path):
-        export_calls.append((config, out_path))
-        return bootstrapped
-
-    monkeypatch.setattr(auth_bridge, "export_storage_state", fake_export)
-
+def test_resolve_storage_state_returns_none_when_nothing_found(tmp_path):
+    # No explicit path and no default file -> None, so notebooklm-py does its
+    # own discovery (NOTEBOOKLM_AUTH_JSON / ~/.notebooklm).
     cfg = make_config(tmp_path)
     client = NotebookLMRPCClient(cfg)
-    resolved = asyncio.run(client._resolve_storage_state())
+    assert client._resolve_storage_state() is None
 
-    assert resolved == bootstrapped
-    # export was called once, with the config and the default target path.
-    assert len(export_calls) == 1
-    assert export_calls[0][0] is cfg
-    assert export_calls[0][1] == target
+
+def test_start_with_no_session_uses_from_storage_no_arg(tmp_path, monkeypatch):
+    # When no storage_state is found, start() must call from_storage() with NO
+    # path argument (recorded as None) and still succeed against the backend.
+    backend = _Backend()
+    cfg = make_config(tmp_path)  # profile dir has no storage_state.json
+    client = NotebookLMRPCClient(cfg)
+    opened = install_backend(monkeypatch, backend)
+
+    asyncio.run(client.start())
+    assert opened == [None]
+    assert client._backend is backend
+
+
+def test_start_raises_authentication_error_when_no_session(tmp_path, monkeypatch):
+    # If entering the backend context fails (no session anywhere), start() must
+    # surface a clear AuthenticationError and reset its context manager.
+    backend = _Backend()
+    cfg = make_config(tmp_path)
+    client = NotebookLMRPCClient(cfg)
+    install_backend(monkeypatch, backend, enter_error=RuntimeError("no auth json"))
+
+    with pytest.raises(AuthenticationError, match="notebooklm login"):
+        asyncio.run(client.start())
+    # Failed enter must leave the client cleanly un-started.
+    assert client._backend is None
+    assert client._cm is None
 
 
 # --------------------------------------------------------------------------- #

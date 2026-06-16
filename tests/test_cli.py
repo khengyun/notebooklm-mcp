@@ -1,14 +1,13 @@
 """Tests for the CLI entry point (``notebooklm_mcp.cli``).
 
 These tests drive the REAL Click command bodies, option parsing, config
-loading, console output, and control flow. The only thing faked is the browser
-client (``NotebookLMClient``) and the FastMCP server (``NotebookLMFastMCP``),
-patched at the import boundary so no real browser or network is touched. Pure
+loading, console output, and control flow. The only thing faked is the RPC
+client (``NotebookLMRPCClient``) and the FastMCP server (``NotebookLMFastMCP``),
+patched at the import boundary so no real session or network is touched. Pure
 helpers (``extract_notebook_id``, ``create_default_config``,
 ``update_config_to_headless``) are exercised directly with real temp files.
 """
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -40,17 +39,8 @@ def setup_cli(monkeypatch, tmp_path, config=None):
     return config
 
 
-def run_asyncio(coro):
-    """A tiny ``asyncio.run`` replacement used where we want explicit loop control."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
-
-
 class FakeClient:
-    """Async-capable fake of ``NotebookLMClient``.
+    """Async-capable fake of ``NotebookLMRPCClient``.
 
     Records ordered calls so tests can assert the command actually invoked the
     boundary (e.g. ``send_message`` with the user's message). Behaviour is
@@ -95,23 +85,14 @@ class FakeClient:
 
 @pytest.fixture
 def fake_client(monkeypatch):
-    """Patch the client at BOTH import sites used by the CLI.
-
-    ``cli.py`` references ``NotebookLMClient`` at module scope (init/chat/test/
-    guided_setup) and also does a function-local ``from .client import
-    NotebookLMClient`` inside ``quick_setup``. Patch both so every command path
-    gets the fake.
-    """
-    import notebooklm_mcp.client as client_module
-
+    """Patch the RPC client symbol the CLI uses (``chat`` and ``test``)."""
     FakeClient.instances = []
     FakeClient.auth_result = True
     FakeClient.start_error = None
     FakeClient.navigate_result = "https://notebooklm.google.com/notebook/abc"
     FakeClient.response_text = "a response"
 
-    monkeypatch.setattr(cli_module, "NotebookLMClient", FakeClient)
-    monkeypatch.setattr(client_module, "NotebookLMClient", FakeClient)
+    monkeypatch.setattr(cli_module, "NotebookLMRPCClient", FakeClient)
     return FakeClient
 
 
@@ -182,39 +163,11 @@ def test_create_default_config_writes_valid_json(tmp_path):
     # Spot-check the keys the rest of the system depends on.
     assert data["default_notebook_id"] == VALID_UUID
     assert data["headless"] is False
-    assert data["base_url"] == "https://notebooklm.google.com"
-    assert data["server_name"] == "notebooklm-mcp"
     assert data["auth"]["profile_dir"] == "./chrome_profile_notebooklm"
-    assert data["auth"]["use_persistent_session"] is True
     # Must round-trip into a real ServerConfig.
     cfg = ServerConfig.from_dict(json.loads(path.read_text()))
     assert cfg.default_notebook_id == VALID_UUID
-
-
-# --------------------------------------------------------------------------- #
-# update_config_to_headless  (pure logic, real temp file)
-# --------------------------------------------------------------------------- #
-
-
-def test_update_config_to_headless_flips_true(tmp_path):
-    path = tmp_path / "cfg.json"
-    path.write_text(json.dumps({"headless": False, "default_notebook_id": "x"}))
-
-    cli_module.update_config_to_headless(str(path))
-
-    data = json.loads(path.read_text())
-    assert data["headless"] is True
-    # Existing keys preserved.
-    assert data["default_notebook_id"] == "x"
-
-
-def test_update_config_to_headless_missing_file_is_graceful(tmp_path, capsys):
-    # No file present -> must NOT raise; emits a warning instead.
-    missing = tmp_path / "does-not-exist.json"
-    cli_module.update_config_to_headless(str(missing))
-    out = capsys.readouterr().out
-    assert "Failed to update config" in out
-    assert not missing.exists()
+    assert cfg.auth.profile_dir == "./chrome_profile_notebooklm"
 
 
 # --------------------------------------------------------------------------- #
@@ -267,7 +220,7 @@ def test_cli_debug_flag_sets_debug(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def test_init_creates_config_and_profile_and_reaches_guided_setup(
+def test_init_creates_config_and_profile_and_prints_login_steps(
     monkeypatch, fake_client
 ):
     setup_cli(monkeypatch, Path("."))
@@ -277,24 +230,18 @@ def test_init_creates_config_and_profile_and_reaches_guided_setup(
         result = runner.invoke(cli_module.cli, ["init", VALID_UUID])
 
         assert result.exit_code == 0, result.output
-        # Config + profile created BEFORE the browser ran.
+        # Config + profile dir created (no browser involved).
         assert Path("notebooklm-config.json").exists()
         assert Path("chrome_profile_notebooklm").is_dir()
 
         cfg = json.loads(Path("notebooklm-config.json").read_text())
-        # guided_setup succeeded (auth=True, send_message ok) -> flipped headless.
-        assert cfg["headless"] is True
+        assert cfg["default_notebook_id"] == VALID_UUID
 
-    # guided_setup reached the real client and exercised its flow.
-    client = fake_client.instances[0]
-    assert ("navigate", VALID_UUID) in client.calls
-    assert any(
-        c == ("send_message", "Hello, this is a test message from setup.")
-        or (isinstance(c, tuple) and c[0] == "send_message")
-        for c in client.calls
-    )
-    assert "close" in client.calls
-    assert "✅ Setup Complete!" in result.output
+    # init no longer launches a client at all.
+    assert fake_client.instances == []
+    assert "Setup Complete!" in result.output
+    # The user is directed to create a session with notebooklm login.
+    assert "notebooklm login" in result.output
 
 
 def test_init_invalid_url_exits_1(monkeypatch, fake_client):
@@ -304,54 +251,8 @@ def test_init_invalid_url_exits_1(monkeypatch, fake_client):
         result = runner.invoke(cli_module.cli, ["init", "not-a-valid-id"])
     assert result.exit_code == 1
     assert "Error:" in result.output
-    # Browser never started for an invalid URL.
+    # No client was ever constructed for an invalid URL.
     assert fake_client.instances == []
-
-
-def test_init_browser_failure_handled_gracefully(monkeypatch, fake_client):
-    # guided_setup re-raises on client.start() failure; init wraps it and
-    # exits 1 WITHOUT crashing/tracebacking out of Click.
-    setup_cli(monkeypatch, Path("."))
-    fake_client.start_error = RuntimeError("browser exploded")
-
-    runner = CliRunner()
-    with runner.isolated_filesystem():
-        result = runner.invoke(cli_module.cli, ["init", VALID_UUID])
-        # Config still created before the failure.
-        assert Path("notebooklm-config.json").exists()
-
-    assert result.exit_code == 1
-    assert "Setup failed" in result.output
-    # The fake's start raised -> close still called in guided_setup finally.
-    client = fake_client.instances[0]
-    assert "start" in client.calls
-    assert "close" in client.calls
-
-
-def test_init_setup_not_successful_leaves_headless_false(monkeypatch, fake_client):
-    # If auth fails AND send_message raises, guided_setup returns False, so init
-    # must NOT flip headless to true.
-    setup_cli(monkeypatch, Path("."))
-    fake_client.auth_result = False
-
-    class FailingSend(FakeClient):
-        async def send_message(self, message):
-            self.calls.append(("send_message", message))
-            raise RuntimeError("no chat")
-
-    import notebooklm_mcp.client as client_module
-
-    monkeypatch.setattr(cli_module, "NotebookLMClient", FailingSend)
-    monkeypatch.setattr(client_module, "NotebookLMClient", FailingSend)
-
-    runner = CliRunner()
-    with runner.isolated_filesystem():
-        # headless=False path; provide stdin so the input() prompt (non-headless)
-        # does not hang.
-        result = runner.invoke(cli_module.cli, ["init", VALID_UUID], input="\n")
-        assert result.exit_code == 0, result.output
-        cfg = json.loads(Path("notebooklm-config.json").read_text())
-        assert cfg["headless"] is False
 
 
 # --------------------------------------------------------------------------- #
@@ -501,7 +402,7 @@ def test_chat_single_message_path(monkeypatch, tmp_path, fake_client):
 
 
 def test_chat_auth_failed_branch(monkeypatch, tmp_path, fake_client):
-    # auth fails; headless=True so no input() prompt; message still sent.
+    # auth fails; the command prints a login hint and still sends the message.
     setup_cli(monkeypatch, tmp_path)
     config_path = make_config_file(tmp_path)
     fake_client.auth_result = False
@@ -515,7 +416,6 @@ def test_chat_auth_failed_branch(monkeypatch, tmp_path, fake_client):
             "chat",
             "--message",
             "hi",
-            "--headless",
         ],
     )
 
@@ -579,15 +479,12 @@ def test_chat_session_error_wrapper_exits_1(monkeypatch, tmp_path, fake_client):
             self.calls.append("close")
             raise RuntimeError("close boom")
 
-    import notebooklm_mcp.client as client_module
-
-    monkeypatch.setattr(cli_module, "NotebookLMClient", ExplodingClose)
-    monkeypatch.setattr(client_module, "NotebookLMClient", ExplodingClose)
+    monkeypatch.setattr(cli_module, "NotebookLMRPCClient", ExplodingClose)
 
     runner = CliRunner()
     result = runner.invoke(
         cli_module.cli,
-        ["--config", str(config_path), "chat", "--message", "hi", "--headless"],
+        ["--config", str(config_path), "chat", "--message", "hi"],
     )
     assert result.exit_code == 1
     assert "Chat session error" in result.output
@@ -598,7 +495,7 @@ def test_chat_session_error_wrapper_exits_1(monkeypatch, tmp_path, fake_client):
 # --------------------------------------------------------------------------- #
 
 
-def test_quick_setup_setup_only_no_browser(monkeypatch, fake_client):
+def test_quick_setup_creates_config_and_prints_login_steps(monkeypatch, fake_client):
     runner = CliRunner()
     with runner.isolated_filesystem():
         result = runner.invoke(
@@ -609,7 +506,6 @@ def test_quick_setup_setup_only_no_browser(monkeypatch, fake_client):
                 "qs-config.json",
                 "--notebook",
                 "nb-qs",
-                "--setup-only",
             ],
         )
         assert result.exit_code == 0, result.output
@@ -618,12 +514,18 @@ def test_quick_setup_setup_only_no_browser(monkeypatch, fake_client):
         data = json.loads(Path("qs-config.json").read_text())
         assert data["default_notebook_id"] == "nb-qs"
 
-    # --setup-only must NOT touch the browser.
+    # quick-setup must NOT touch any client.
     assert fake_client.instances == []
-    assert "Config-Only Setup Complete" in result.output
+    assert "Config Ready" in result.output
+    assert "notebooklm login" in result.output
 
 
-def test_quick_setup_with_browser_runs_client(monkeypatch, fake_client):
+def test_quick_setup_imports_profile(monkeypatch, fake_client, tmp_path):
+    # A provided --profile is imported into the new profile dir via setup_profile.
+    src = tmp_path / "src_profile"
+    src.mkdir()
+    (src / "marker.txt").write_text("x")
+
     runner = CliRunner()
     with runner.isolated_filesystem():
         result = runner.invoke(
@@ -634,44 +536,21 @@ def test_quick_setup_with_browser_runs_client(monkeypatch, fake_client):
                 "qs.json",
                 "--notebook",
                 "nb-2",
-                "--headless",
+                "--profile",
+                str(src),
             ],
         )
         assert result.exit_code == 0, result.output
         assert Path("qs.json").exists()
+        # The imported profile landed in the default profile dir.
+        assert Path("chrome_profile_notebooklm/marker.txt").read_text() == "x"
 
-    # With browser path: fake client started + authenticated + closed.
-    assert len(fake_client.instances) == 1
-    client = fake_client.instances[0]
-    assert "start" in client.calls
-    assert "authenticate" in client.calls
-    assert "close" in client.calls
-    assert "Complete Setup Success" in result.output
-
-
-def test_quick_setup_manual_login_branch(monkeypatch, fake_client):
-    # auth returns False (manual login needed). The command prints the login
-    # panel, waits for Enter, then re-checks auth. We feed an Enter line.
-    fake_client.auth_result = False
-
-    runner = CliRunner()
-    with runner.isolated_filesystem():
-        result = runner.invoke(
-            cli_module.cli,
-            ["quick-setup", "--config", "qs.json", "--notebook", "nb-3"],
-            input="\n",
-        )
-        assert result.exit_code == 0, result.output
-
-    client = fake_client.instances[0]
-    # authenticate called twice (initial + after manual login).
-    assert client.calls.count("authenticate") == 2
-    assert "Manual Login Needed" in result.output
-    assert "close" in client.calls
+    assert fake_client.instances == []
+    assert "Imported" in result.output
 
 
 def test_quick_setup_failure_exits_1(monkeypatch, fake_client):
-    # Make ServerConfig.save_to_file blow up -> outer except -> exit 1.
+    # Make ServerConfig.save_to_file blow up -> except -> exit 1.
     import notebooklm_mcp.cli as climod
 
     def boom(self, path):
@@ -689,7 +568,6 @@ def test_quick_setup_failure_exits_1(monkeypatch, fake_client):
                 "qs.json",
                 "--notebook",
                 "nb-4",
-                "--setup-only",
             ],
         )
     assert result.exit_code == 1
@@ -877,28 +755,4 @@ def test_test_command_failure_exits_1(monkeypatch, tmp_path, fake_client):
     assert "Test" in result.output and "boom" in result.output
     # close still called in the finally.
     client = fake_client.instances[0]
-    assert "close" in client.calls
-
-
-# --------------------------------------------------------------------------- #
-# guided_setup (exercised directly for the already-authenticated branch)
-# --------------------------------------------------------------------------- #
-
-
-def test_guided_setup_already_authenticated_returns_true(monkeypatch, fake_client):
-    config = ServerConfig(default_notebook_id="nb-guided", headless=True)
-    result = run_asyncio(cli_module.guided_setup(config))
-    assert result is True
-    client = fake_client.instances[0]
-    assert ("navigate", "nb-guided") in client.calls
-    assert "close" in client.calls
-
-
-def test_guided_setup_no_notebook_id_raises(monkeypatch, fake_client):
-    config = ServerConfig(default_notebook_id=None, headless=True)
-    with pytest.raises(ValueError):
-        run_asyncio(cli_module.guided_setup(config))
-    # Browser was started then closed even on the error path.
-    client = fake_client.instances[0]
-    assert "start" in client.calls
     assert "close" in client.calls

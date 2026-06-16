@@ -42,10 +42,10 @@ tasks:
       - task: install
 
   test:
-    desc: "🧪 Run working tests with UV"
+    desc: "🧪 Run the full test suite with UV"
     cmds:
-      - echo "🧪 Running working tests..."
-      - "{{.PYTEST_CMD}} tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py -v"
+      - echo "🧪 Running the full test suite..."
+      - "{{.PYTEST_CMD}} tests/ -v"
     deps:
       - task: install
 
@@ -53,7 +53,7 @@ tasks:
     desc: "⚡ Quick single test for validation"
     cmds:
       - echo "⚡ Running quick validation test..."
-      - "{{.PYTEST_CMD}} tests/test_config_real.py::TestServerConfig::test_default_values -v"
+      - "{{.PYTEST_CMD}} tests/test_config.py::test_server_config_save_and_load -v"
     deps:
       - task: install
 
@@ -61,7 +61,7 @@ tasks:
     desc: "📊 Run coverage analysis with UV"
     cmds:
       - echo "📊 Running coverage analysis..."
-      - uv run coverage run --source=src/{{.PACKAGE_NAME}} -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py --junitxml=junit.xml
+      - uv run coverage run --source=src/{{.PACKAGE_NAME}} -m pytest tests/ --junitxml=junit.xml
       - uv run coverage report --show-missing
       - uv run coverage xml
       - uv run coverage html

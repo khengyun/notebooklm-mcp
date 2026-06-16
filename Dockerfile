@@ -1,7 +1,6 @@
 FROM python:3.11-slim
 
-# Install system dependencies (Chrome is installed below; Patchright manages
-# its own browser driver, so no chromedriver download is needed).
+# Install system dependencies.
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg2 \
@@ -13,8 +12,8 @@ RUN apt-get update && apt-get install -y \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
 
-# Install Google Chrome (drives the app via Patchright channel="chrome").
-# Uses the modern signed-by keyring method (apt-key is deprecated/removed).
+# Install Google Chrome — used by `notebooklm login` to create the auth
+# session. Uses the modern signed-by keyring method (apt-key is deprecated).
 RUN wget -q -O /usr/share/keyrings/google-chrome.gpg.key https://dl.google.com/linux/linux_signing_key.pub \
     && gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg /usr/share/keyrings/google-chrome.gpg.key \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
@@ -36,10 +35,6 @@ COPY pyproject.toml uv.lock ./
 # Install dependencies with UV
 RUN uv sync --all-groups
 
-# Ensure Patchright's browser system libraries are present (Chrome already
-# pulls most of them; this covers any gaps for headless Chromium fallback).
-RUN uv run patchright install-deps chromium || true
-
 # Copy source code
 COPY src/ ./src/
 COPY examples/ ./examples/
@@ -47,7 +42,10 @@ COPY examples/ ./examples/
 # Install package with UV
 RUN uv pip install -e .
 
-# Create chrome profile directory with proper permissions
+# Create the profile directory with proper permissions. The NotebookLM session
+# is provided at runtime via a mounted storage_state.json (created on the host
+# with `notebooklm login`), e.g.
+#   docker run -v $PWD/chrome_profile_notebooklm:/app/chrome_profile_notebooklm ...
 RUN mkdir -p /app/chrome_profile_notebooklm \
     && chown -R notebooklm:notebooklm /app/chrome_profile_notebooklm
 
