@@ -15,16 +15,8 @@ def test_server_config_round_trip(tmp_path):
         timeout=45,
         debug=True,
         default_notebook_id="abc",
-        server_name="custom",
-        stdio_mode=False,
-        streaming_timeout=30,
-        response_stability_checks=2,
-        retry_attempts=1,
         auth=AuthConfig(
-            cookies_path="cookies.json",
             profile_dir=str(profile_dir),
-            use_persistent_session=False,
-            auto_login=False,
             import_profile_from=None,
         ),
     )
@@ -34,22 +26,16 @@ def test_server_config_round_trip(tmp_path):
 
     assert restored.headless is True
     assert restored.timeout == 45
+    assert restored.debug is True
     assert restored.default_notebook_id == "abc"
-    assert restored.server_name == "custom"
     assert restored.auth.profile_dir == str(profile_dir)
-    assert restored.auth.use_persistent_session is False
 
 
 @pytest.mark.parametrize(
     "overrides,expected",
     [
         ({"timeout": 0}, "Timeout must be positive"),
-        ({"streaming_timeout": 0}, "Streaming timeout must be positive"),
-        (
-            {"response_stability_checks": 0},
-            "Response stability checks must be positive",
-        ),
-        ({"retry_attempts": -1}, "Retry attempts cannot be negative"),
+        ({"timeout": -5}, "Timeout must be positive"),
     ],
 )
 def test_server_config_validate_errors(tmp_path, overrides, expected):
@@ -85,6 +71,49 @@ def test_server_config_validate_profile_checks(tmp_path):
         config.validate()
 
 
+def test_from_dict_ignores_unknown_keys():
+    """A config dict carrying removed/unknown keys (top-level and under
+    ``auth``) must load cleanly and silently drop the unknown keys."""
+    data = {
+        "headless": True,
+        "timeout": 45,
+        "default_notebook_id": "abc",
+        # Removed/legacy top-level keys that older config files may still carry.
+        "engine": "patchright",
+        "chrome_channel": "chrome",
+        "chrome_binary": "/usr/bin/google-chrome",
+        "stdio_mode": False,
+        "auth": {
+            "profile_dir": "/tmp/p",
+            # Removed/legacy auth keys.
+            "cookies_path": "cookies.json",
+            "auto_login": True,
+            "totally_unknown": 123,
+        },
+    }
+
+    config = ServerConfig.from_dict(data)
+
+    # Known keys applied.
+    assert config.headless is True
+    assert config.timeout == 45
+    assert config.default_notebook_id == "abc"
+    assert config.auth.profile_dir == "/tmp/p"
+    # Unknown keys ignored (not attached as attributes).
+    assert not hasattr(config, "engine")
+    assert not hasattr(config, "chrome_channel")
+    assert not hasattr(config, "stdio_mode")
+    assert not hasattr(config.auth, "cookies_path")
+    assert not hasattr(config.auth, "totally_unknown")
+
+
+def test_from_dict_without_auth_key():
+    """from_dict must work when the ``auth`` key is missing entirely."""
+    config = ServerConfig.from_dict({"default_notebook_id": "x"})
+    assert config.default_notebook_id == "x"
+    assert isinstance(config.auth, AuthConfig)
+
+
 def test_server_config_save_and_load(tmp_path):
     config = ServerConfig(default_notebook_id="abc")
     path = tmp_path / "config.json"
@@ -93,6 +122,42 @@ def test_server_config_save_and_load(tmp_path):
     loaded = ServerConfig.from_file(str(path))
 
     assert loaded.default_notebook_id == "abc"
+
+
+def test_server_config_from_file_errors(tmp_path):
+    """from_file surfaces a ConfigurationError for a missing file and for
+    malformed JSON (both error branches in from_file)."""
+    missing_path = tmp_path / "missing.json"
+    with pytest.raises(ConfigurationError, match="Config file not found"):
+        ServerConfig.from_file(str(missing_path))
+
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text("{not-json}")
+    with pytest.raises(ConfigurationError, match="Invalid JSON"):
+        ServerConfig.from_file(str(bad_path))
+
+
+def test_save_to_file_creates_directories(tmp_path):
+    """save_to_file must create missing parent directories before writing."""
+    nested = tmp_path / "configs" / "server.json"
+    config = ServerConfig(default_notebook_id="nested")
+
+    config.save_to_file(str(nested))
+
+    assert nested.exists()
+    saved = json.loads(nested.read_text())
+    assert saved["default_notebook_id"] == "nested"
+
+
+def test_load_config_prefers_local_default_file(tmp_path, monkeypatch):
+    """With no explicit path, load_config picks up ./config.json in the cwd."""
+    monkeypatch.chdir(tmp_path)
+    default_path = tmp_path / "config.json"
+    default_path.write_text(json.dumps({"default_notebook_id": "local"}))
+
+    config = load_config()
+
+    assert config.default_notebook_id == "local"
 
 
 def test_setup_profile_imports_existing_profile(tmp_path):
@@ -164,94 +229,49 @@ def test_setup_profile_blank_import_path_treated_as_none(tmp_path):
     assert profile_dir.is_dir()
 
 
-def test_chrome_channel_and_binary_round_trip(tmp_path):
-    """The chrome_channel / chrome_binary fields must survive a full
-    to_dict -> from_dict -> save_to_file -> from_file round trip."""
-    profile_dir = tmp_path / "profiles" / "p"
-    profile_dir.parent.mkdir()
-
-    config = ServerConfig(
-        chrome_binary="/opt/google/chrome/chrome",
-        auth=AuthConfig(
-            profile_dir=str(profile_dir),
-            chrome_channel="chromium",
-        ),
-    )
-
-    # to_dict surfaces both fields.
-    data = config.to_dict()
-    assert data["chrome_binary"] == "/opt/google/chrome/chrome"
-    assert data["auth"]["chrome_channel"] == "chromium"
-
-    # from_dict restores them.
-    restored = ServerConfig.from_dict(json.loads(json.dumps(data)))
-    assert restored.chrome_binary == "/opt/google/chrome/chrome"
-    assert restored.auth.chrome_channel == "chromium"
-
-    # And they survive a file save/load round trip.
-    path = tmp_path / "cfg.json"
-    config.save_to_file(str(path))
-    from_file = ServerConfig.from_file(str(path))
-    assert from_file.chrome_binary == "/opt/google/chrome/chrome"
-    assert from_file.auth.chrome_channel == "chromium"
-
-
-def test_chrome_channel_defaults_to_chrome():
-    """The default channel is 'chrome' and chrome_binary defaults to None."""
+def test_storage_state_path_defaults_to_none():
+    """``auth.storage_state_path`` defaults to None (no session configured)."""
     config = ServerConfig()
-    assert config.auth.chrome_channel == "chrome"
-    assert config.chrome_binary is None
-
-
-def test_engine_defaults_to_rpc():
-    """The RPC engine is the new default and storage_state_path defaults None."""
-    config = ServerConfig()
-    assert config.engine == "rpc"
     assert config.auth.storage_state_path is None
 
 
-def test_engine_and_storage_state_round_trip(tmp_path):
-    """``engine`` and ``auth.storage_state_path`` must survive a full
+def test_storage_state_round_trip(tmp_path):
+    """``auth.storage_state_path`` must survive a full
     to_dict -> from_dict -> save_to_file -> from_file round trip."""
     profile_dir = tmp_path / "profiles" / "p"
     profile_dir.parent.mkdir()
 
     config = ServerConfig(
-        engine="patchright",
         auth=AuthConfig(
             profile_dir=str(profile_dir),
             storage_state_path="/tmp/state/storage_state.json",
         ),
     )
 
-    # to_dict surfaces both new fields.
+    # to_dict surfaces the field.
     data = config.to_dict()
-    assert data["engine"] == "patchright"
     assert data["auth"]["storage_state_path"] == "/tmp/state/storage_state.json"
 
-    # from_dict restores them (through a JSON round trip to catch serialization
+    # from_dict restores it (through a JSON round trip to catch serialization
     # surprises).
     restored = ServerConfig.from_dict(json.loads(json.dumps(data)))
-    assert restored.engine == "patchright"
     assert restored.auth.storage_state_path == "/tmp/state/storage_state.json"
 
-    # And they survive a file save/load round trip.
+    # And it survives a file save/load round trip.
     path = tmp_path / "cfg.json"
     config.save_to_file(str(path))
     from_file = ServerConfig.from_file(str(path))
-    assert from_file.engine == "patchright"
     assert from_file.auth.storage_state_path == "/tmp/state/storage_state.json"
 
 
-def test_engine_round_trips_default_rpc(tmp_path):
-    """The default engine='rpc' / storage_state_path=None also round-trips
-    (so a default config written to disk loads back identically)."""
+def test_storage_state_round_trips_default_none(tmp_path):
+    """The default storage_state_path=None also round-trips (so a default config
+    written to disk loads back identically)."""
     config = ServerConfig(default_notebook_id="abc")
     path = tmp_path / "default_cfg.json"
     config.save_to_file(str(path))
 
     from_file = ServerConfig.from_file(str(path))
-    assert from_file.engine == "rpc"
     assert from_file.auth.storage_state_path is None
 
 

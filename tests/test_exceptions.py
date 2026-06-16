@@ -7,7 +7,6 @@ def test_exceptions_inherit_base():
     assert str(error) == "auth"
 
     for exc_cls in [
-        exceptions.StreamingError,
         exceptions.NavigationError,
         exceptions.ChatError,
         exceptions.ConfigurationError,

@@ -99,18 +99,11 @@ jobs:
       env:
         UV_PYTHON: ${{ matrix.python-version }}
 
-    - name: "🌐 Install Chrome"
-      run: |
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-
     - name: "🧪 Run unit tests with coverage"
       run: |
         export PATH="$HOME/.cargo/bin:$PATH"
         echo "🧪 Running tests with coverage..."
-        uv run coverage run --source=src/notebooklm_mcp -m pytest tests/test_config.py tests/test_config_real.py tests/test_comprehensive_simple.py --junitxml=junit-${{ matrix.python-version }}.xml -v
+        uv run coverage run --source=src/notebooklm_mcp -m pytest tests/ --junitxml=junit-${{ matrix.python-version }}.xml -v
         uv run coverage xml -o coverage-${{ matrix.python-version }}.xml
         echo "✅ Tests completed for Python ${{ matrix.python-version }}"
       env:
@@ -125,48 +118,6 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: false
       continue-on-error: true
-
-  # Integration tests
-  integration-test:
-    name: "🔗 Integration Tests"
-    runs-on: ubuntu-latest
-    needs: [test]
-    steps:
-    - name: "📥 Checkout repository"
-      uses: actions/checkout@v4
-
-    - name: "⚡ Install UV"
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        export PATH="$HOME/.cargo/bin:$PATH"
-
-    - name: "🐍 Set up Python"
-      run: |
-        export PATH="$HOME/.cargo/bin:$PATH"
-        uv python install 3.10
-
-    - name: "📦 Install dependencies"
-      run: |
-        export PATH="$HOME/.cargo/bin:$PATH"
-        uv sync --all-groups
-
-    - name: "🌐 Install Chrome"
-      run: |
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-
-    - name: "🔗 Run integration tests"
-      run: |
-        export PATH="$HOME/.cargo/bin:$PATH"
-        echo "🔗 Running integration tests..."
-        uv run pytest tests/test_integration.py -v --junitxml=integration-junit.xml || echo "Integration tests completed (some may be skipped without real browser)"
-        echo "✅ Integration tests completed"
-      env:
-        QT_QPA_PLATFORM: offscreen
-        PYTEST_DISABLE_PLUGIN_AUTOLOAD: 1
 
   # Build check
   build:

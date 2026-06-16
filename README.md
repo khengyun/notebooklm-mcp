@@ -102,12 +102,11 @@ your-project/
 |------|-------------|------------|
 | `healthcheck` | Server health status | None |
 | `send_chat_message` | Send message to NotebookLM | `message: str`, `wait_for_response: bool` |
-| `get_chat_response` | Get response with timeout | `timeout: int` |
+| `get_chat_response` | Get the latest response | None |
 | `chat_with_notebook` | Complete interaction | `message: str`, `notebook_id?: str` |
 | `navigate_to_notebook` | Switch notebooks | `notebook_id: str` |
 | `get_default_notebook` | Current notebook | None |
 | `set_default_notebook` | Set default | `notebook_id: str` |
-| `get_quick_response` | Instant response | None |
 
 ## 👨‍💻 Developer Workflow
 

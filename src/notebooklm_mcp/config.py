@@ -4,7 +4,7 @@ Configuration management for NotebookLM MCP Server
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from shutil import copytree, rmtree
 from typing import Any, Dict, Optional
@@ -28,19 +28,12 @@ def _copy_tree(src: Path, dest: Path) -> None:
 class AuthConfig:
     """Authentication configuration"""
 
-    cookies_path: Optional[str] = None
     profile_dir: str = "./chrome_profile_notebooklm"
-    use_persistent_session: bool = True
-    auto_login: bool = True
 
-    # Browser channel for Patchright. "chrome" drives the installed Google
-    # Chrome (best stealth, proven against NotebookLM). Set to None/"" to use
-    # Patchright's bundled Chromium instead.
-    chrome_channel: Optional[str] = "chrome"
-
-    # Playwright storage_state JSON used by the RPC engine (notebooklm-py).
-    # When unset, the RPC engine bootstraps it from the persistent Chrome
-    # profile above (log in once with the browser, reuse the session for RPC).
+    # storage_state JSON used by the RPC engine (notebooklm-py). Created with
+    # ``notebooklm login``. When unset, the RPC engine looks for a
+    # ``storage_state.json`` in ``profile_dir`` and then defers to
+    # notebooklm-py's own discovery (NOTEBOOKLM_AUTH_JSON / ~/.notebooklm).
     storage_state_path: Optional[str] = None
 
     # Quick setup options
@@ -52,38 +45,16 @@ class AuthConfig:
 class ServerConfig:
     """Server configuration"""
 
-    # Browser settings
+    # General settings
     headless: bool = False
     timeout: int = 60
     debug: bool = False
 
-    # Optional absolute path to the Chrome/Chromium binary. When unset,
-    # Patchright resolves the browser via the configured channel (cross-platform).
-    chrome_binary: Optional[str] = None
-
-    # Automation engine:
-    #   "rpc"       -> notebooklm-py batchexecute backend (default; fast, full
-    #                  notebook/source management). Browser used only to
-    #                  bootstrap the login session into a storage_state.
-    #   "patchright" -> the browser/DOM engine (chat only, no UI-independent
-    #                  management). Kept as an alternative.
-    engine: str = "rpc"
-
     # NotebookLM settings
     default_notebook_id: Optional[str] = None
-    base_url: str = "https://notebooklm.google.com"
-
-    # MCP settings
-    server_name: str = "notebooklm-mcp"
-    stdio_mode: bool = True
 
     # Authentication
     auth: AuthConfig = field(default_factory=AuthConfig)
-
-    # Advanced settings
-    streaming_timeout: int = 60
-    response_stability_checks: int = 3
-    retry_attempts: int = 3
 
     @classmethod
     def from_file(cls, config_path: str) -> "ServerConfig":
@@ -99,10 +70,25 @@ class ServerConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ServerConfig":
-        """Create configuration from dictionary"""
-        auth_data = data.pop("auth", {})
-        auth_config = AuthConfig(**auth_data)
-        return cls(auth=auth_config, **data)
+        """Create configuration from a (possibly stale) dictionary.
+
+        Unknown keys are silently ignored so config files written by older
+        versions — which may still carry removed keys like ``engine``,
+        ``chrome_channel`` or ``stdio_mode`` — load cleanly instead of raising
+        ``TypeError``. Both the top-level data and the ``auth`` sub-dict are
+        filtered down to the known dataclass field names.
+        """
+        data = dict(data)  # don't mutate the caller's dict
+        auth_data = data.pop("auth", {}) or {}
+        auth_fields = {f.name for f in fields(AuthConfig)}
+        auth_config = AuthConfig(
+            **{k: v for k, v in auth_data.items() if k in auth_fields}
+        )
+        server_fields = {f.name for f in fields(cls)} - {"auth"}
+        return cls(
+            auth=auth_config,
+            **{k: v for k, v in data.items() if k in server_fields},
+        )
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
@@ -113,14 +99,9 @@ class ServerConfig:
             debug=os.getenv("NOTEBOOKLM_DEBUG", "false").lower() == "true",
             default_notebook_id=os.getenv("NOTEBOOKLM_NOTEBOOK_ID"),
             auth=AuthConfig(
-                cookies_path=os.getenv("NOTEBOOKLM_COOKIES_PATH"),
                 profile_dir=os.getenv(
                     "NOTEBOOKLM_PROFILE_DIR", "./chrome_profile_notebooklm"
                 ),
-                use_persistent_session=os.getenv(
-                    "NOTEBOOKLM_PERSISTENT_SESSION", "true"
-                ).lower()
-                == "true",
             ),
         )
 
@@ -150,15 +131,6 @@ class ServerConfig:
         """Validate configuration settings"""
         if self.timeout <= 0:
             raise ConfigurationError("Timeout must be positive")
-
-        if self.streaming_timeout <= 0:
-            raise ConfigurationError("Streaming timeout must be positive")
-
-        if self.response_stability_checks <= 0:
-            raise ConfigurationError("Response stability checks must be positive")
-
-        if self.retry_attempts < 0:
-            raise ConfigurationError("Retry attempts cannot be negative")
 
         if self.auth.profile_dir and not Path(self.auth.profile_dir).parent.exists():
             raise ConfigurationError(

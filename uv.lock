@@ -1132,8 +1132,7 @@ dependencies = [
     { name = "click" },
     { name = "fastmcp" },
     { name = "loguru" },
-    { name = "notebooklm-py" },
-    { name = "patchright" },
+    { name = "notebooklm-py", extra = ["browser"] },
     { name = "pydantic" },
     { name = "rich" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
@@ -1178,8 +1177,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.0.0" },
     { name = "fastmcp", specifier = ">=2.0.0" },
     { name = "loguru", specifier = ">=0.7.2" },
-    { name = "notebooklm-py", specifier = ">=0.7" },
-    { name = "patchright", specifier = ">=1.60.1" },
+    { name = "notebooklm-py", extras = ["browser"], specifier = ">=0.7" },
     { name = "pydantic", specifier = ">=2.8.2" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0" },
@@ -1230,6 +1228,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e3/ad/44b3f03c0e95a9521fd9802cf41b12595d136a932863bb8ddf84601a017f/notebooklm_py-0.7.1.tar.gz", hash = "sha256:7e9a3c842388def3d81a3a1574846fc77bb485df6811a1e3cdcc1cb5906e43f9", size = 10962378, upload-time = "2026-06-07T03:38:47.077Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/04/de3c57d075cf721b539e8f28969fe1ca567ccac82fc7696cb44f75a28776/notebooklm_py-0.7.1-py3-none-any.whl", hash = "sha256:02647efdb6a725b2a0259df78271a22723c0d304f23fe41ae1ac6a302f3d4907", size = 784212, upload-time = "2026-06-07T03:38:44.98Z" },
+]
+
+[package.optional-dependencies]
+browser = [
+    { name = "playwright" },
 ]
 
 [[package]]
@@ -1324,25 +1327,6 @@ wheels = [
 ]
 
 [[package]]
-name = "patchright"
-version = "1.60.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "greenlet" },
-    { name = "pyee" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/71/26/c1e858fd1acc63e410b3d33243955f36d2a0814487b97a7aa604ad2baffd/patchright-1.60.1-py3-none-macosx_10_13_x86_64.whl", hash = "sha256:e9492100d4e2a85ff92fc3a668dd16dee03f21df6e559c7b9f7c71e86ff48c6b", size = 43458936, upload-time = "2026-06-03T12:11:50.892Z" },
-    { url = "https://files.pythonhosted.org/packages/55/dd/2dd8e4e02489ec8fd57ad93dec9ef444b6f42adcc4fe95df30237c92841d/patchright-1.60.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:20bd806df2469b451ccd2ea10f5f944ceb0e0d83c716f5752b0c956c1ee59476", size = 42245629, upload-time = "2026-06-03T12:11:56.098Z" },
-    { url = "https://files.pythonhosted.org/packages/54/cc/0fa0bedec61045fd9068682e3695557b622c483f829d341093879ec8dbd9/patchright-1.60.1-py3-none-macosx_11_0_universal2.whl", hash = "sha256:9fd15a64c0ca80740dc2a3f41cda336a06a2ed6068d0ab893172654290b06e6b", size = 43458935, upload-time = "2026-06-03T12:12:01.077Z" },
-    { url = "https://files.pythonhosted.org/packages/ce/c2/4b8f69de0a20d90792980c43c0e60b10b801e08cf0224ccc8a8266e1fffb/patchright-1.60.1-py3-none-manylinux1_x86_64.whl", hash = "sha256:547e7bfb813102309789cc42933780e5fdf7c4727de59fb2791e64bd1298a7f3", size = 47451519, upload-time = "2026-06-03T12:12:06.645Z" },
-    { url = "https://files.pythonhosted.org/packages/db/fc/9fd6a70818cf0bc3b62574af483d762963cb65ca0a369826a0536faffe41/patchright-1.60.1-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:023945a2fd30219a284721ca36385bd44075ae7b53071dc1da38036b6dbe88ec", size = 47139153, upload-time = "2026-06-03T12:12:12.047Z" },
-    { url = "https://files.pythonhosted.org/packages/08/bc/81fb621e5ab4131e6f324c9ba6cb2a9f3b146c92f12484bec95efe8c8347/patchright-1.60.1-py3-none-win32.whl", hash = "sha256:05b98a6afdbe7e6645fe223009c47cc8e7859df55fd8ce9d8a9925b3389b0ee1", size = 37886460, upload-time = "2026-06-03T12:12:16.598Z" },
-    { url = "https://files.pythonhosted.org/packages/74/8e/fff80350ed2c2c1f62145d667070799c60ca9e9b28d54e4f751f0b4f8da6/patchright-1.60.1-py3-none-win_amd64.whl", hash = "sha256:51b306ed55cd58f1bca24641458f5c9f7e86a1f1727dcffdead669cfe4c0a485", size = 37886465, upload-time = "2026-06-03T12:12:21.448Z" },
-    { url = "https://files.pythonhosted.org/packages/ee/b8/b6d1bfe98a420c1ccfb2f23a7bb2b4cdb40170907bae638e7ae92abd287c/patchright-1.60.1-py3-none-win_arm64.whl", hash = "sha256:f795728c1e27fc226dbe203c1aec713a537f01be963474fe0f3691f5e6457f9f", size = 34022283, upload-time = "2026-06-03T12:12:26.732Z" },
-]
-
-[[package]]
 name = "pathable"
 version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1367,6 +1351,25 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/23/e8/21db9c9987b0e728855bd57bff6984f67952bea55d6f75e055c46b5383e8/platformdirs-4.4.0.tar.gz", hash = "sha256:ca753cf4d81dc309bc67b0ea38fd15dc97bc30ce419a7f58d13eb3bf14c4febf", size = 21634, upload-time = "2025-08-26T14:32:04.268Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/40/4b/2028861e724d3bd36227adfa20d3fd24c3fc6d52032f4a93c133be5d17ce/platformdirs-4.4.0-py3-none-any.whl", hash = "sha256:abd01743f24e5287cd7a5db3752faf1a2d65353f38ec26d98e25a6db65958c85", size = 18654, upload-time = "2025-08-26T14:32:02.735Z" },
+]
+
+[[package]]
+name = "playwright"
+version = "1.60.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "greenlet" },
+    { name = "pyee" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/21/f0/832bd9677194908da118064eef20082f2791e3d18215cc6d9391ee2c5a67/playwright-1.60.0-py3-none-macosx_10_13_x86_64.whl", hash = "sha256:6a8cd0fec171fb3089e95e898c8bc8a6f35dea0b78b399e12fcc19427e91b1d7", size = 43474635, upload-time = "2026-05-18T12:00:31.969Z" },
+    { url = "https://files.pythonhosted.org/packages/59/7b/e1d32ae8a3ed937ec2be3721c5f728b13d731a0b7c6442e0b3bec5094ac0/playwright-1.60.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:39b5420ba6145045b69ced4c5c47d4d9fe5bddfc8ff816c518913afcb25ec7a5", size = 42261327, upload-time = "2026-05-18T12:00:35.638Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/bc/23de499ded6411c188a20c5a0dea6f0cd4ed5d2b3cc6042a5dbd3ed609aa/playwright-1.60.0-py3-none-macosx_11_0_universal2.whl", hash = "sha256:2581d0e6a3392c71f91b27460c7fd093356818dc430f48153896c8aeeaef7705", size = 43474636, upload-time = "2026-05-18T12:00:39.294Z" },
+    { url = "https://files.pythonhosted.org/packages/22/7b/1d679f4fced4ea94efadd17103856d8c565384f68382a1681264e46f5925/playwright-1.60.0-py3-none-manylinux1_x86_64.whl", hash = "sha256:1c2bfae7884fb3fb05b853290eab8f343d524e5016f2f1def702acbbdf14c93e", size = 47467220, upload-time = "2026-05-18T12:00:43.179Z" },
+    { url = "https://files.pythonhosted.org/packages/84/c2/1528d267d4442bd2c6b8eaeab819dd52c2030bf80e89293f0ba1f687473b/playwright-1.60.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:43e66564125ee31b07a58cefb21e256d62d67d8d1713e6858df7a3019d8ed353", size = 47154856, upload-time = "2026-05-18T12:00:46.715Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/4e/b008b6440a7a1624378041da94829956d4b8f7ab9ef5aad22d0dc3f2e26d/playwright-1.60.0-py3-none-win32.whl", hash = "sha256:ec94e416ea320711e0ad4bf185dcbf41833672961e90773e1885255d7db7b7e7", size = 37902157, upload-time = "2026-05-18T12:00:50.374Z" },
+    { url = "https://files.pythonhosted.org/packages/55/f0/0541524133104f9cc20bf900870ff4a736b76a23483f3a55295ddfa58409/playwright-1.60.0-py3-none-win_amd64.whl", hash = "sha256:9566821ce6030a1f9e7146a24e19355ab0d98805fd0f9be50bb3d8fef1750c02", size = 37902159, upload-time = "2026-05-18T12:00:53.728Z" },
+    { url = "https://files.pythonhosted.org/packages/80/c8/210f282d278e4709cdd71b12a31af45a30a22ab3207b387e29b37e478713/playwright-1.60.0-py3-none-win_arm64.whl", hash = "sha256:6e4f6700a4c2250efff8e690a81d66e3855754fb587b6b87cf5c784014f91537", size = 34037981, upload-time = "2026-05-18T12:00:57.584Z" },
 ]
 
 [[package]]

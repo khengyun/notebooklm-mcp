@@ -15,12 +15,6 @@ class AuthenticationError(NotebookLMError):
     pass
 
 
-class StreamingError(NotebookLMError):
-    """Raised when streaming response handling fails"""
-
-    pass
-
-
 class NavigationError(NotebookLMError):
     """Raised when browser navigation fails"""
 

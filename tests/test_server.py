@@ -78,7 +78,7 @@ def patch_fastmcp(monkeypatch):
 
 
 def test_notebooklmfastmcp_registers_tools(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     config = ServerConfig(default_notebook_id="abc")
     server = server_module.NotebookLMFastMCP(config)
 
@@ -87,13 +87,14 @@ def test_notebooklmfastmcp_registers_tools(monkeypatch):
         "healthcheck",
         "send_chat_message",
         "get_chat_response",
-        "get_quick_response",
         "chat_with_notebook",
         "navigate_to_notebook",
         "get_default_notebook",
         "set_default_notebook",
     }
     assert expected_tools.issubset(server.app.tools.keys())
+    # get_quick_response was merged into get_chat_response and must be gone.
+    assert "get_quick_response" not in server.app.tools
 
 
 @pytest.mark.asyncio
@@ -105,12 +106,9 @@ async def test_ensure_client_initializes_once(monkeypatch):
             super().__init__(config)
             created.append(self)
 
-    monkeypatch.setattr(server_module, "NotebookLMClient", TrackingClient)
-    # engine="patchright" routes _build_client through the injectable
-    # NotebookLMClient symbol (the TrackingClient) instead of the RPC backend.
-    server = server_module.NotebookLMFastMCP(
-        ServerConfig(default_notebook_id="abc", engine="patchright")
-    )
+    # _ensure_client builds NotebookLMRPCClient (the injected TrackingClient).
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", TrackingClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
     await server._ensure_client()
     await server._ensure_client()
@@ -126,12 +124,9 @@ async def test_ensure_client_errors_propagate(monkeypatch):
         async def start(self):  # pragma: no cover - exercised for error branch
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(server_module, "NotebookLMClient", FailingClient)
-    # engine="patchright" so the injectable FailingClient is built (and its
-    # start() raises) without touching the RPC/browser bootstrap path.
-    server = server_module.NotebookLMFastMCP(
-        ServerConfig(default_notebook_id="abc", engine="patchright")
-    )
+    # The injected client's start() raises, so _ensure_client must wrap it.
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", FailingClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
     with pytest.raises(NotebookLMError, match="Client initialization failed"):
         await server._ensure_client()
@@ -142,7 +137,7 @@ async def test_ensure_client_errors_propagate(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_uses_transport(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     await server.start(transport="http", host="0.0.0.0", port=9000)
 
@@ -166,7 +161,7 @@ async def test_start_does_not_init_browser_eagerly(monkeypatch):
         async def start(self):  # pragma: no cover - must never be called by start()
             raise RuntimeError("fail")
 
-    monkeypatch.setattr(server_module, "NotebookLMClient", ExplodingClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", ExplodingClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
     # Should NOT raise: the transport binds without touching the browser.
@@ -180,7 +175,7 @@ async def test_start_does_not_init_browser_eagerly(monkeypatch):
 @pytest.mark.asyncio
 async def test_start_handles_transport_errors(monkeypatch):
     """The ``start()`` error path now fires when the transport itself fails."""
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
     async def boom(**_kwargs):
@@ -194,12 +189,9 @@ async def test_start_handles_transport_errors(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stop_closes_client(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
-    # engine="patchright" so the real _ensure_client builds the injectable
-    # DummyClient (not the RPC backend).
-    server = server_module.NotebookLMFastMCP(
-        ServerConfig(default_notebook_id="abc", engine="patchright")
-    )
+    # The real _ensure_client builds the injected DummyClient.
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     await server._ensure_client()
 
     await server.stop()
@@ -208,7 +200,7 @@ async def test_stop_closes_client(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_healthcheck_tool_reports_status(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
     # No client -> unhealthy, not authenticated.
@@ -237,7 +229,7 @@ async def test_healthcheck_tool_reports_status(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_send_chat_message_tool(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     dummy = DummyClient(server.config)
     server.client = dummy
@@ -263,7 +255,7 @@ async def test_send_chat_message_tool(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_send_chat_message_tool_no_wait(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     dummy = DummyClient(server.config)
     server.client = dummy
@@ -290,7 +282,7 @@ async def test_send_chat_message_tool_error(monkeypatch):
         async def send_message(self, message):
             raise RuntimeError("fail")
 
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     server.client = FailingClient(server.config)
 
@@ -306,7 +298,7 @@ async def test_send_chat_message_tool_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_with_notebook_tool(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     dummy = DummyClient(server.config)
     server.client = dummy
@@ -332,7 +324,7 @@ async def test_chat_with_notebook_tool(monkeypatch):
 async def test_chat_with_notebook_no_navigation_when_id_absent(monkeypatch):
     """When no notebook_id is supplied the server must skip navigation and
     fall back to the configured default notebook id in its response."""
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     dummy = DummyClient(server.config)
     server.client = dummy
@@ -353,8 +345,8 @@ async def test_chat_with_notebook_no_navigation_when_id_absent(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_chat_response_and_quick_response(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+async def test_get_chat_response(monkeypatch):
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     dummy = DummyClient(server.config)
     server.client = dummy
@@ -363,19 +355,16 @@ async def test_get_chat_response_and_quick_response(monkeypatch):
         return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.GetResponseRequest(timeout=1)
+    request = server_module.GetResponseRequest()
 
     chat_result = await server.app.tools["get_chat_response"](request)
-    quick_result = await server.app.tools["get_quick_response"]()
 
     # Assert on the unique sentinel: this proves the server surfaces the
     # client's actual return value (not a hardcoded "response" string) and
-    # that each tool delegated to client.get_response().
+    # that the tool delegated to client.get_response() exactly once.
     assert chat_result["response"] == DUMMY_RESPONSE
-    assert quick_result["response"] == DUMMY_RESPONSE
     assert chat_result["status"] == "success"
-    assert quick_result["status"] == "success"
-    assert dummy.get_response_calls == 2
+    assert dummy.get_response_calls == 1
 
 
 @pytest.mark.asyncio
@@ -384,7 +373,7 @@ async def test_get_chat_response_error(monkeypatch):
         async def get_response(self):
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     server.client = FailingClient(server.config)
 
@@ -392,34 +381,15 @@ async def test_get_chat_response_error(monkeypatch):
         return self.client
 
     server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.GetResponseRequest(timeout=1)
+    request = server_module.GetResponseRequest()
 
     with pytest.raises(NotebookLMError):
         await server.app.tools["get_chat_response"](request)
 
 
 @pytest.mark.asyncio
-async def test_quick_response_error(monkeypatch):
-    class FailingClient(DummyClient):
-        async def get_response(self):
-            raise RuntimeError("quick-fail")
-
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    server.client = FailingClient(server.config)
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-
-    with pytest.raises(NotebookLMError):
-        await server.app.tools["get_quick_response"]()
-
-
-@pytest.mark.asyncio
 async def test_get_and_set_default_notebook_tools(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     dummy = DummyClient(server.config)
     server.client = dummy
@@ -450,7 +420,7 @@ async def test_chat_with_notebook_tool_error_wraps_exception(monkeypatch):
         async def send_message(self, message):
             raise RuntimeError("send blew up")
 
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     server.client = BadClient(server.config)
 
@@ -470,7 +440,7 @@ async def test_navigate_to_notebook_tool_error(monkeypatch):
         async def navigate_to_notebook(self, notebook_id):
             raise RuntimeError("navigate-fail")
 
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     server.client = BadClient(server.config)
 
@@ -486,7 +456,7 @@ async def test_navigate_to_notebook_tool_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_sse_transport(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     await server.start(transport="sse", host="0.0.0.0", port=8080)
 
@@ -499,7 +469,7 @@ async def test_start_sse_transport(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_stdio_transport(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     await server.start()
 
@@ -518,7 +488,7 @@ def test_create_fastmcp_server_loads_config(tmp_path):
 
 @pytest.mark.asyncio
 async def test_healthcheck_tool_error(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
     class ExplodingClient:
@@ -533,7 +503,7 @@ async def test_healthcheck_tool_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_navigate_to_notebook_tool_success(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     dummy = DummyClient(server.config)
     server.client = dummy
@@ -551,7 +521,7 @@ async def test_navigate_to_notebook_tool_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_set_default_notebook_error(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
     class ExplodingConfig(SimpleNamespace):
@@ -569,7 +539,7 @@ async def test_set_default_notebook_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stop_handles_client_close_error(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     errors = []
 
@@ -714,10 +684,10 @@ class ManagementClient(DummyClient):
 
 
 def _management_server(monkeypatch, client_cls=ManagementClient):
-    """A server with an RPC config and a management-capable client wired in,
-    with ``_ensure_client`` stubbed to that client (no real init)."""
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
-    config = ServerConfig(default_notebook_id="abc", engine="rpc")
+    """A server with a management-capable client wired in, with
+    ``_ensure_client`` stubbed to that client (no real init)."""
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
+    config = ServerConfig(default_notebook_id="abc")
     server = server_module.NotebookLMFastMCP(config)
     client = client_cls(config)
     server.client = client
@@ -731,10 +701,8 @@ def _management_server(monkeypatch, client_cls=ManagementClient):
 
 def test_management_tools_registered(monkeypatch):
     """All 9 management tools must be registered on the app."""
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(
-        ServerConfig(default_notebook_id="abc", engine="rpc")
-    )
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
+    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
     expected = {
         "list_notebooks",
         "create_notebook",
@@ -856,151 +824,3 @@ async def test_management_tool_wraps_client_error(monkeypatch):
     server, _ = _management_server(monkeypatch, client_cls=FailingMgmt)
     with pytest.raises(NotebookLMError, match="Failed to list notebooks"):
         await server.app.tools["list_notebooks"]()
-
-
-# --------------------------------------------------------------------------- #
-# _require_management guard
-# --------------------------------------------------------------------------- #
-class NonManagementClient(DummyClient):
-    """A patchright-style client that does NOT support management."""
-
-    supports_management = False
-
-
-@pytest.mark.parametrize(
-    "tool_name,request_factory",
-    [
-        ("list_notebooks", lambda m: None),
-        ("create_notebook", lambda m: m.CreateNotebookRequest(title="t")),
-        (
-            "rename_notebook",
-            lambda m: m.RenameNotebookRequest(notebook_id="n", new_title="t"),
-        ),
-        ("delete_notebook", lambda m: m.NotebookIdRequest(notebook_id="n")),
-        ("get_notebook_summary", lambda m: m.NotebookIdRequest(notebook_id="n")),
-        ("list_sources", lambda m: m.NotebookIdRequest(notebook_id="n")),
-        (
-            "add_source_url",
-            lambda m: m.AddSourceUrlRequest(notebook_id="n", url="u"),
-        ),
-        (
-            "add_source_text",
-            lambda m: m.AddSourceTextRequest(notebook_id="n", title="t", text="x"),
-        ),
-        (
-            "delete_source",
-            lambda m: m.DeleteSourceRequest(notebook_id="n", source_id="s"),
-        ),
-    ],
-)
-@pytest.mark.asyncio
-async def test_management_guard_rejects_non_management_engine(
-    monkeypatch, tool_name, request_factory
-):
-    """Every management tool must raise NotebookLMError mentioning the 'rpc'
-    engine when the active client does not support management."""
-    monkeypatch.setattr(server_module, "NotebookLMClient", NonManagementClient)
-    config = ServerConfig(default_notebook_id="abc", engine="patchright")
-    server = server_module.NotebookLMFastMCP(config)
-    server.client = NonManagementClient(config)
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-
-    tool = server.app.tools[tool_name]
-    request = request_factory(server_module)
-    with pytest.raises(NotebookLMError, match="rpc"):
-        if request is None:
-            await tool()
-        else:
-            await tool(request)
-
-
-@pytest.mark.asyncio
-async def test_require_management_passes_for_rpc_client(monkeypatch):
-    """_require_management returns the client when it supports management."""
-    server, client = _management_server(monkeypatch)
-    assert server._require_management() is client
-
-
-def test_require_management_raises_when_no_client(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(
-        ServerConfig(default_notebook_id="abc", engine="rpc")
-    )
-    server.client = None
-    with pytest.raises(NotebookLMError, match="rpc"):
-        server._require_management()
-
-
-# --------------------------------------------------------------------------- #
-# _build_client engine dispatch
-# --------------------------------------------------------------------------- #
-def test_build_client_patchright_uses_injectable_symbol(monkeypatch):
-    """engine='patchright' must construct the module-level NotebookLMClient
-    (the injectable symbol), passing the config through."""
-    built = []
-
-    class MarkerClient:
-        def __init__(self, config):
-            built.append(config)
-
-    monkeypatch.setattr(server_module, "NotebookLMClient", MarkerClient)
-    config = ServerConfig(default_notebook_id="abc", engine="patchright")
-    server = server_module.NotebookLMFastMCP(config)
-
-    client = server._build_client()
-    assert isinstance(client, MarkerClient)
-    assert built == [config]
-
-
-def test_build_client_rpc_constructs_rpc_client(monkeypatch):
-    """engine='rpc' must construct a NotebookLMRPCClient (patched so no real
-    backend is built), passing the config through."""
-    import notebooklm_mcp.client_rpc as client_rpc_module
-
-    built = []
-
-    class MarkerRPCClient:
-        supports_management = True
-
-        def __init__(self, config):
-            built.append(config)
-
-    monkeypatch.setattr(client_rpc_module, "NotebookLMRPCClient", MarkerRPCClient)
-    # The patchright branch symbol must NOT be used for engine='rpc'.
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
-    config = ServerConfig(default_notebook_id="abc", engine="rpc")
-    server = server_module.NotebookLMFastMCP(config)
-
-    client = server._build_client()
-    assert isinstance(client, MarkerRPCClient)
-    assert built == [config]
-
-
-def test_build_client_defaults_to_rpc_when_engine_missing(monkeypatch):
-    """When the config has no ``engine`` attribute at all, _build_client falls
-    back to the RPC engine (getattr default)."""
-    import notebooklm_mcp.client_rpc as client_rpc_module
-
-    built = []
-
-    class MarkerRPCClient:
-        supports_management = True
-
-        def __init__(self, config):
-            built.append(config)
-
-    monkeypatch.setattr(client_rpc_module, "NotebookLMRPCClient", MarkerRPCClient)
-    monkeypatch.setattr(server_module, "NotebookLMClient", DummyClient)
-
-    config = ServerConfig(default_notebook_id="abc", engine="rpc")
-    server = server_module.NotebookLMFastMCP(config)
-    # Simulate an older config object missing the engine field.
-    delattr(server.config, "engine")
-
-    client = server._build_client()
-    assert isinstance(client, MarkerRPCClient)
-    assert built == [config]
