@@ -31,26 +31,24 @@ requires-python = ">=3.10"
 dependencies = [
     # Core FastMCP v2 framework
     "fastmcp>=2.0.0",
-    
-    # Web automation
-    "selenium>=4.22.0",
-    "undetected-chromedriver>=3.5.4",
-    
+    # RPC engine (default) — notebooklm-py drives NotebookLM's internal
+    # batchexecute API for fast, full notebook/source management.
+    "notebooklm-py>=0.7",
+    # Browser engine — Patchright (undetected Playwright); used to bootstrap
+    # the login session (storage_state) and as the alternative chat engine.
+    "patchright>=1.60.1",
     # Async support
     "anyio>=4.4.0",
-    "trio>=0.26.0", 
+    "trio>=0.26.0",
     "async-timeout>=4.0.3",
-    
     # Data validation and CLI
     "pydantic>=2.8.2",
     "click>=8.0.0",
     "rich>=13.0.0",
-    
     # Logging and utilities
     "loguru>=0.7.2",
     "typing-extensions>=4.0.0",
     "psutil>=5.9.0",
-    
     # TOML parsing (for Python < 3.11 compatibility)
     "tomli>=2.0.0; python_version<'3.11'",
 ]
@@ -96,15 +94,11 @@ docs = [
 
 # UV Configuration
 [tool.uv]
-# Development workflow configuration
-dev-dependencies = []  # Use dependency-groups instead
-
 # Package configuration
 package = true
 
 # Constraint dependencies for consistent resolution
 constraint-dependencies = [
-    "selenium>=4.20.0,<5.0",
     "pydantic>=2.8.0,<3.0"
 ]
 
@@ -182,8 +176,7 @@ strict_equality = true
 
 [[tool.mypy.overrides]]
 module = [
-    "selenium.*",
-    "undetected_chromedriver.*",
+    "patchright.*",
     "mcp.*",
     "loguru.*",
 ]
@@ -198,7 +191,6 @@ addopts = [
     "-p", "no:napari",
     "-p", "no:napari-plugin-engine",
     "-p", "no:npe2",
-    "-p", "no:cov",
 ]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
@@ -217,7 +209,6 @@ omit = [
     "*/tests/*",
     "*/test_*",
     "*/__pycache__/*",
-    "src/notebooklm_mcp/cli.py",
 ]
 
 [tool.coverage.report]

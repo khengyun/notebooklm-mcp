@@ -23,16 +23,22 @@ console = Console()
 
 
 def extract_notebook_id(url: str) -> str:
-    """Extract notebook ID from NotebookLM URL"""
-    # Pattern to match NotebookLM URL with notebook ID
+    """Extract a notebook ID (UUID) from a NotebookLM URL or a bare ID.
+
+    Accepts upper- or lower-case UUIDs and anchors the bare-ID form so a longer
+    hyphenated string can't yield a truncated/garbage 36-char window.
+    """
+    uuid = (
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    )
     patterns = [
-        r"https://notebooklm\.google\.com/notebook/([a-f0-9-]{36})",
-        r"notebooklm\.google\.com/notebook/([a-f0-9-]{36})",
-        r"([a-f0-9-]{36})",  # Just the ID itself
+        rf"notebooklm\.google\.com/notebook/({uuid})",
+        rf"^({uuid})$",  # Just the ID itself (anchored)
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, url)
+        match = re.search(pattern, url.strip())
         if match:
             return match.group(1)
 
@@ -405,7 +411,7 @@ def quick_setup(
 ) -> None:
     """Quick setup with config file and optional profile import"""
 
-    async def run_setup():
+    async def run_setup() -> None:
         try:
             # Step 1: Create enhanced config
             console.print("📋 Step 1: Creating configuration...")

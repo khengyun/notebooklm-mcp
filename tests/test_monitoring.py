@@ -30,6 +30,26 @@ def test_metrics_collector_record_request():
     assert metrics["average_response_time"] > 0
 
 
+def test_metrics_collector_trims_request_times_ring_buffer():
+    """The rolling average keeps only the last 100 samples: recording more
+    than 100 requests must trim the oldest (covers the pop(0) branch)."""
+    collector = monitoring.MetricsCollector()
+    # 100 fast requests then 5 slow ones: if the buffer were unbounded the
+    # average would be dragged down by the early fast samples.
+    for _ in range(100):
+        collector.record_request(True, 0.0)
+    for _ in range(5):
+        collector.record_request(True, 10.0)
+
+    # Buffer is capped at 100 entries.
+    assert len(collector._request_times) == 100
+    # The oldest 0.0 samples were popped, so the average reflects the recent
+    # window (a mix of trailing 0.0s and the five 10.0s), strictly > 0.
+    metrics = collector.get_metrics()
+    assert metrics["requests_total"] == 105
+    assert metrics["average_response_time"] > 0
+
+
 def test_metrics_collector_update_active_sessions():
     collector = monitoring.MetricsCollector()
     collector.update_active_sessions(3)
@@ -120,10 +140,10 @@ async def test_health_checker_reports_status(monkeypatch):
     dummy_psutil = DummyPsutil(memory_percent=40.0, cpu_percent=30.0)
     monkeypatch.setattr(monitoring, "psutil", dummy_psutil)
 
+    # The Patchright client exposes the page URL via the ``url`` attribute
+    # (``page.url``), not Selenium's ``current_url``.
     client = SimpleNamespace(
-        driver=SimpleNamespace(
-            current_url="https://notebooklm.google.com/notebook/123"
-        ),
+        driver=SimpleNamespace(url="https://notebooklm.google.com/notebook/123"),
         _is_authenticated=True,
     )
 
@@ -134,6 +154,69 @@ async def test_health_checker_reports_status(monkeypatch):
     assert result.healthy is True
     assert result.browser_status == "healthy"
     assert result.authentication_status == "authenticated"
+
+
+@pytest.mark.asyncio
+async def test_health_checker_browser_unhealthy_when_url_raises(monkeypatch):
+    """If reading ``driver.url`` raises, the browser is reported as unhealthy
+    (with a truncated error) and overall health is False even on a clean box."""
+    dummy_psutil = DummyPsutil(memory_percent=10.0, cpu_percent=5.0)
+    monkeypatch.setattr(monitoring, "psutil", dummy_psutil)
+
+    class BrokenDriver:
+        @property
+        def url(self):
+            raise RuntimeError("page crashed: navigation timeout exceeded")
+
+    client = SimpleNamespace(driver=BrokenDriver(), _is_authenticated=True)
+    checker = monitoring.HealthChecker(client)
+    monitoring.metrics_collector.start_time = asyncio.get_event_loop().time()
+
+    result = await checker.check_health()
+
+    assert result.browser_status.startswith("unhealthy:")
+    assert "page crashed" in result.browser_status
+    # The error message is truncated to 50 chars by the source.
+    assert len(result.browser_status) <= len("unhealthy: ") + 50
+    # A dead browser means overall health is False even with low mem/cpu.
+    assert result.healthy is False
+    # Auth status is still computed independently.
+    assert result.authentication_status == "authenticated"
+
+
+@pytest.mark.asyncio
+async def test_health_checker_unhealthy_when_resources_exhausted(monkeypatch):
+    """Even with a healthy browser, high memory/CPU must flip overall health
+    to False (the >=90% threshold branch)."""
+    monkeypatch.setattr(
+        monitoring, "psutil", DummyPsutil(memory_percent=95.0, cpu_percent=10.0)
+    )
+    client = SimpleNamespace(
+        driver=SimpleNamespace(url="https://notebooklm.google.com/notebook/1"),
+        _is_authenticated=True,
+    )
+    checker = monitoring.HealthChecker(client)
+    monitoring.metrics_collector.start_time = asyncio.get_event_loop().time()
+
+    result = await checker.check_health()
+    assert result.browser_status == "healthy"
+    # Browser is fine but memory is over threshold -> not healthy overall.
+    assert result.healthy is False
+
+
+@pytest.mark.asyncio
+async def test_health_checker_no_client_is_unknown(monkeypatch):
+    """With no client at all, browser/auth are 'unknown' and health is False."""
+    monkeypatch.setattr(
+        monitoring, "psutil", DummyPsutil(memory_percent=10.0, cpu_percent=5.0)
+    )
+    checker = monitoring.HealthChecker(None)
+    monitoring.metrics_collector.start_time = asyncio.get_event_loop().time()
+
+    result = await checker.check_health()
+    assert result.browser_status == "unknown"
+    assert result.authentication_status == "unknown"
+    assert result.healthy is False
 
 
 @pytest.mark.asyncio

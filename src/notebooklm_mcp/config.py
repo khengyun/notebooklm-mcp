@@ -20,6 +20,16 @@ class AuthConfig:
     use_persistent_session: bool = True
     auto_login: bool = True
 
+    # Browser channel for Patchright. "chrome" drives the installed Google
+    # Chrome (best stealth, proven against NotebookLM). Set to None/"" to use
+    # Patchright's bundled Chromium instead.
+    chrome_channel: Optional[str] = "chrome"
+
+    # Playwright storage_state JSON used by the RPC engine (notebooklm-py).
+    # When unset, the RPC engine bootstraps it from the persistent Chrome
+    # profile above (log in once with the browser, reuse the session for RPC).
+    storage_state_path: Optional[str] = None
+
     # Quick setup options
     import_profile_from: Optional[str] = None  # Path to existing Chrome profile
     export_profile_to: Optional[str] = None  # Path to export current profile
@@ -34,6 +44,18 @@ class ServerConfig:
     headless: bool = False
     timeout: int = 60
     debug: bool = False
+
+    # Optional absolute path to the Chrome/Chromium binary. When unset,
+    # Patchright resolves the browser via the configured channel (cross-platform).
+    chrome_binary: Optional[str] = None
+
+    # Automation engine:
+    #   "rpc"       -> notebooklm-py batchexecute backend (default; fast, full
+    #                  notebook/source management). Browser used only to
+    #                  bootstrap the login session into a storage_state.
+    #   "patchright" -> the browser/DOM engine (chat only, no UI-independent
+    #                  management). Kept as an alternative.
+    engine: str = "rpc"
 
     # NotebookLM settings
     default_notebook_id: Optional[str] = None

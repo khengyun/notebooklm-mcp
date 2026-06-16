@@ -1,33 +1,27 @@
 FROM python:3.11-slim
 
-# Install system dependencies for Chrome and UV
+# Install system dependencies (Chrome is installed below; Patchright manages
+# its own browser driver, so no chromedriver download is needed).
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg2 \
-    software-properties-common \
-    apt-transport-https \
     ca-certificates \
     curl \
-    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install UV Python manager
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:$PATH"
+ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
 
-# Install Google Chrome
-RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+# Install Google Chrome (drives the app via Patchright channel="chrome").
+# Uses the modern signed-by keyring method (apt-key is deprecated/removed).
+RUN wget -q -O /usr/share/keyrings/google-chrome.gpg.key https://dl.google.com/linux/linux_signing_key.pub \
+    && gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg /usr/share/keyrings/google-chrome.gpg.key \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+       > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
-
-# Install ChromeDriver
-RUN CHROMEDRIVER_VERSION=`curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE` && \
-    wget -O /tmp/chromedriver.zip http://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip && \
-    unzip /tmp/chromedriver.zip chromedriver -d /usr/local/bin/ && \
-    rm /tmp/chromedriver.zip && \
-    chmod +x /usr/local/bin/chromedriver
 
 # Set up working directory
 WORKDIR /app
@@ -42,6 +36,10 @@ COPY pyproject.toml uv.lock ./
 # Install dependencies with UV
 RUN uv sync --all-groups
 
+# Ensure Patchright's browser system libraries are present (Chrome already
+# pulls most of them; this covers any gaps for headless Chromium fallback).
+RUN uv run patchright install-deps chromium || true
+
 # Copy source code
 COPY src/ ./src/
 COPY examples/ ./examples/
@@ -50,7 +48,8 @@ COPY examples/ ./examples/
 RUN uv pip install -e .
 
 # Create chrome profile directory with proper permissions
-RUN mkdir -p /app/chrome_profile && chown -R notebooklm:notebooklm /app/chrome_profile
+RUN mkdir -p /app/chrome_profile_notebooklm \
+    && chown -R notebooklm:notebooklm /app/chrome_profile_notebooklm
 
 # Switch to non-root user
 USER notebooklm
@@ -60,12 +59,14 @@ ENV PYTHONUNBUFFERED=1
 ENV UV_PYTHON=python3.11
 ENV NOTEBOOKLM_CONFIG_FILE=/app/notebooklm-config.json
 
-# Expose MCP ports
-EXPOSE 8001 8002
+# Expose the HTTP MCP port
+EXPOSE 8001
 
-# Health check with UV
+# Health check — validates the config file parses.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD uv run python -c "from notebooklm_mcp.config import ServerConfig; print('Config valid') if ServerConfig.from_file('/app/notebooklm-config.json') else exit(1)" || exit 1
+    CMD uv run python -c "from notebooklm_mcp.config import ServerConfig; ServerConfig.from_file('/app/notebooklm-config.json')" || exit 1
 
-# Default command - STDIO mode for MCP
-CMD ["uv", "run", "python", "-m", "notebooklm_mcp.cli", "--config", "/app/notebooklm-config.json", "server"]
+# Default command: HTTP transport. A detached container has no stdin, so STDIO
+# would idle with no client — HTTP is the correct transport for `docker run -d`.
+CMD ["uv", "run", "python", "-m", "notebooklm_mcp.cli", "--config", "/app/notebooklm-config.json", \
+     "server", "--transport", "http", "--host", "0.0.0.0", "--port", "8001"]

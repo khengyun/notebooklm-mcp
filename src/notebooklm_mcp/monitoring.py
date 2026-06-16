@@ -8,11 +8,16 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from typing import Any, AsyncGenerator, Dict, Optional
 
-import psutil
+import psutil  # type: ignore[import-untyped]
 from loguru import logger
 
 try:
-    from prometheus_client import Counter, Gauge, Histogram, start_http_server
+    from prometheus_client import (  # type: ignore[import-not-found]
+        Counter,
+        Gauge,
+        Histogram,
+        start_http_server,
+    )
 
     PROMETHEUS_AVAILABLE = True
 except ImportError:
@@ -166,7 +171,7 @@ class HealthChecker:
                 if self.client.driver is not None:
                     try:
                         # Try to get current URL to test browser responsiveness
-                        _ = self.client.driver.current_url
+                        _ = self.client.driver.url
                         browser_status = "healthy"
                     except Exception as e:
                         browser_status = f"unhealthy: {str(e)[:50]}"
