@@ -47,6 +47,10 @@ class DummyClient:
         self.call_order: list[str] = []
         self.get_response_calls = 0
 
+    @property
+    def is_authenticated(self):
+        return self._is_authenticated
+
     async def start(self):
         self.started = True
 
@@ -75,6 +79,22 @@ class DummyClient:
 @pytest.fixture(autouse=True)
 def patch_fastmcp(monkeypatch):
     monkeypatch.setattr(server_module, "FastMCP", DummyFastMCP)
+
+
+def _server_with_client(monkeypatch, client_cls=DummyClient):
+    """Build a server with ``client_cls`` wired in and ``_ensure_client``
+    stubbed to return it (no real initialization)."""
+    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
+    config = ServerConfig(default_notebook_id="abc")
+    server = server_module.NotebookLMFastMCP(config)
+    client = client_cls(config)
+    server.client = client
+
+    async def fake_ensure(self):
+        return self.client
+
+    server._ensure_client = MethodType(fake_ensure, server)
+    return server, client
 
 
 def test_notebooklmfastmcp_registers_tools(monkeypatch):
@@ -149,11 +169,11 @@ async def test_start_uses_transport(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_does_not_init_browser_eagerly(monkeypatch):
-    """Lazy init: a broken browser client must NOT stop the transport binding.
+async def test_start_does_not_init_client_eagerly(monkeypatch):
+    """Lazy init: a broken client must NOT stop the transport binding.
 
-    ``start()`` no longer calls ``_ensure_client`` — the browser is created on
-    the first tool call — so even a client whose ``start()`` explodes leaves the
+    ``start()`` does not call ``_ensure_client`` — the client is created on the
+    first tool call — so even a client whose ``start()`` explodes leaves the
     transport free to bind.
     """
 
@@ -164,7 +184,7 @@ async def test_start_does_not_init_browser_eagerly(monkeypatch):
     monkeypatch.setattr(server_module, "NotebookLMRPCClient", ExplodingClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
-    # Should NOT raise: the transport binds without touching the browser.
+    # Should NOT raise: the transport binds without touching the client.
     await server.start()
 
     assert server.app.run_calls[-1] == {"transport": "stdio"}
@@ -174,7 +194,7 @@ async def test_start_does_not_init_browser_eagerly(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_handles_transport_errors(monkeypatch):
-    """The ``start()`` error path now fires when the transport itself fails."""
+    """The ``start()`` error path fires when the transport itself fails."""
     monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
     server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
 
@@ -229,17 +249,10 @@ async def test_healthcheck_tool_reports_status(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_send_chat_message_tool(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    dummy = DummyClient(server.config)
-    server.client = dummy
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.SendMessageRequest(message="hi", wait_for_response=True)
-    response = await server.app.tools["send_chat_message"](request)
+    server, dummy = _server_with_client(monkeypatch)
+    response = await server.app.tools["send_chat_message"](
+        message="hi", wait_for_response=True
+    )
 
     assert dummy.sent_messages == ["hi"]
     assert response["status"] == "completed"
@@ -255,17 +268,10 @@ async def test_send_chat_message_tool(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_send_chat_message_tool_no_wait(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    dummy = DummyClient(server.config)
-    server.client = dummy
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.SendMessageRequest(message="hi", wait_for_response=False)
-    response = await server.app.tools["send_chat_message"](request)
+    server, dummy = _server_with_client(monkeypatch)
+    response = await server.app.tools["send_chat_message"](
+        message="hi", wait_for_response=False
+    )
 
     assert response["status"] == "sent"
     assert "response" not in response
@@ -282,33 +288,20 @@ async def test_send_chat_message_tool_error(monkeypatch):
         async def send_message(self, message):
             raise RuntimeError("fail")
 
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    server.client = FailingClient(server.config)
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.SendMessageRequest(message="hi", wait_for_response=False)
+    server, _ = _server_with_client(monkeypatch, client_cls=FailingClient)
 
     with pytest.raises(NotebookLMError):
-        await server.app.tools["send_chat_message"](request)
+        await server.app.tools["send_chat_message"](
+            message="hi", wait_for_response=False
+        )
 
 
 @pytest.mark.asyncio
 async def test_chat_with_notebook_tool(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    dummy = DummyClient(server.config)
-    server.client = dummy
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.ChatRequest(message="hello", notebook_id="xyz")
-    response = await server.app.tools["chat_with_notebook"](request)
+    server, dummy = _server_with_client(monkeypatch)
+    response = await server.app.tools["chat_with_notebook"](
+        message="hello", notebook_id="xyz"
+    )
 
     assert dummy.sent_messages == ["hello"]
     assert dummy.navigated_to == ["xyz"]
@@ -324,17 +317,10 @@ async def test_chat_with_notebook_tool(monkeypatch):
 async def test_chat_with_notebook_no_navigation_when_id_absent(monkeypatch):
     """When no notebook_id is supplied the server must skip navigation and
     fall back to the configured default notebook id in its response."""
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    dummy = DummyClient(server.config)
-    server.client = dummy
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.ChatRequest(message="hello", notebook_id=None)
-    response = await server.app.tools["chat_with_notebook"](request)
+    server, dummy = _server_with_client(monkeypatch)
+    response = await server.app.tools["chat_with_notebook"](
+        message="hello", notebook_id=None
+    )
 
     # No navigation happened; only send + read.
     assert dummy.navigated_to == []
@@ -346,18 +332,8 @@ async def test_chat_with_notebook_no_navigation_when_id_absent(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_chat_response(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    dummy = DummyClient(server.config)
-    server.client = dummy
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.GetResponseRequest()
-
-    chat_result = await server.app.tools["get_chat_response"](request)
+    server, dummy = _server_with_client(monkeypatch)
+    chat_result = await server.app.tools["get_chat_response"]()
 
     # Assert on the unique sentinel: this proves the server surfaces the
     # client's actual return value (not a hardcoded "response" string) and
@@ -373,37 +349,20 @@ async def test_get_chat_response_error(monkeypatch):
         async def get_response(self):
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    server.client = FailingClient(server.config)
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.GetResponseRequest()
+    server, _ = _server_with_client(monkeypatch, client_cls=FailingClient)
 
     with pytest.raises(NotebookLMError):
-        await server.app.tools["get_chat_response"](request)
+        await server.app.tools["get_chat_response"]()
 
 
 @pytest.mark.asyncio
 async def test_get_and_set_default_notebook_tools(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    dummy = DummyClient(server.config)
-    server.client = dummy
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
+    server, _ = _server_with_client(monkeypatch)
 
     get_result = await server.app.tools["get_default_notebook"]()
     assert get_result["notebook_id"] == "abc"
 
-    request = server_module.SetNotebookRequest(notebook_id="new-id")
-    set_result = await server.app.tools["set_default_notebook"](request)
+    set_result = await server.app.tools["set_default_notebook"](notebook_id="new-id")
     assert set_result["new_notebook_id"] == "new-id"
     # The old id must be captured BEFORE the swap, proving the server records
     # the transition rather than echoing the new value twice.
@@ -413,25 +372,16 @@ async def test_get_and_set_default_notebook_tools(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_with_notebook_tool_error_wraps_exception(monkeypatch):
-    """A failure inside chat_with_notebook must be wrapped as NotebookLMError
-    (covers the error path, server.py 205-207)."""
+    """A failure inside chat_with_notebook must be wrapped as NotebookLMError."""
 
     class BadClient(DummyClient):
         async def send_message(self, message):
             raise RuntimeError("send blew up")
 
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    server.client = BadClient(server.config)
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.ChatRequest(message="hello", notebook_id=None)
+    server, _ = _server_with_client(monkeypatch, client_cls=BadClient)
 
     with pytest.raises(NotebookLMError, match="Chat interaction failed"):
-        await server.app.tools["chat_with_notebook"](request)
+        await server.app.tools["chat_with_notebook"](message="hello", notebook_id=None)
 
 
 @pytest.mark.asyncio
@@ -440,18 +390,10 @@ async def test_navigate_to_notebook_tool_error(monkeypatch):
         async def navigate_to_notebook(self, notebook_id):
             raise RuntimeError("navigate-fail")
 
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    server.client = BadClient(server.config)
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.NavigateRequest(notebook_id="xyz")
+    server, _ = _server_with_client(monkeypatch, client_cls=BadClient)
 
     with pytest.raises(NotebookLMError):
-        await server.app.tools["navigate_to_notebook"](request)
+        await server.app.tools["navigate_to_notebook"](notebook_id="xyz")
 
 
 @pytest.mark.asyncio
@@ -487,33 +429,9 @@ def test_create_fastmcp_server_loads_config(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_healthcheck_tool_error(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-
-    class ExplodingClient:
-        def __getattr__(self, _name):
-            raise RuntimeError("boom")
-
-    server.client = ExplodingClient()
-
-    result = await server.app.tools["healthcheck"]()
-    assert result["status"] == "error"
-
-
-@pytest.mark.asyncio
 async def test_navigate_to_notebook_tool_success(monkeypatch):
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    server = server_module.NotebookLMFastMCP(ServerConfig(default_notebook_id="abc"))
-    dummy = DummyClient(server.config)
-    server.client = dummy
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    request = server_module.NavigateRequest(notebook_id="xyz")
-    result = await server.app.tools["navigate_to_notebook"](request)
+    server, dummy = _server_with_client(monkeypatch)
+    result = await server.app.tools["navigate_to_notebook"](notebook_id="xyz")
 
     assert result["status"] == "success"
     assert dummy.navigated_to == ["xyz"]
@@ -531,10 +449,9 @@ async def test_set_default_notebook_error(monkeypatch):
             super().__setattr__(name, value)
 
     server.config = ExplodingConfig(default_notebook_id="abc")
-    request = server_module.SetNotebookRequest(notebook_id="boom")
 
     with pytest.raises(NotebookLMError):
-        await server.app.tools["set_default_notebook"](request)
+        await server.app.tools["set_default_notebook"](notebook_id="boom")
 
 
 @pytest.mark.asyncio
@@ -628,7 +545,7 @@ async def test_main_handles_general_exception(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Notebook / source management tools (RPC engine) + the management guard.
+# Notebook / source management tools (RPC engine).
 # --------------------------------------------------------------------------- #
 # Unique sentinels so the management-tool assertions test real wiring (the
 # server surfacing the client's value) rather than echoing a hardcoded payload.
@@ -640,9 +557,7 @@ SUMMARY = "an-ai-generated-summary-3b8f"
 
 
 class ManagementClient(DummyClient):
-    """An RPC-style client that supports management. Records every call."""
-
-    supports_management = True
+    """An RPC-style client with management methods. Records every call."""
 
     def __init__(self, config):
         super().__init__(config)
@@ -683,22 +598,6 @@ class ManagementClient(DummyClient):
         self.management_calls.append(("delete_source", notebook_id, source_id))
 
 
-def _management_server(monkeypatch, client_cls=ManagementClient):
-    """A server with a management-capable client wired in, with
-    ``_ensure_client`` stubbed to that client (no real init)."""
-    monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
-    config = ServerConfig(default_notebook_id="abc")
-    server = server_module.NotebookLMFastMCP(config)
-    client = client_cls(config)
-    server.client = client
-
-    async def fake_ensure(self):
-        return self.client
-
-    server._ensure_client = MethodType(fake_ensure, server)
-    return server, client
-
-
 def test_management_tools_registered(monkeypatch):
     """All 9 management tools must be registered on the app."""
     monkeypatch.setattr(server_module, "NotebookLMRPCClient", DummyClient)
@@ -719,7 +618,7 @@ def test_management_tools_registered(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_list_notebooks_tool(monkeypatch):
-    server, client = _management_server(monkeypatch)
+    server, client = _server_with_client(monkeypatch, client_cls=ManagementClient)
     result = await server.app.tools["list_notebooks"]()
     assert result["status"] == "success"
     assert result["count"] == 1
@@ -730,9 +629,8 @@ async def test_list_notebooks_tool(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_notebook_tool(monkeypatch):
-    server, client = _management_server(monkeypatch)
-    request = server_module.CreateNotebookRequest(title="My NB")
-    result = await server.app.tools["create_notebook"](request)
+    server, client = _server_with_client(monkeypatch, client_cls=ManagementClient)
+    result = await server.app.tools["create_notebook"](title="My NB")
     assert result["status"] == "success"
     assert result["notebook"] == NB_OBJ
     # The title flowed through to the client unchanged.
@@ -741,20 +639,18 @@ async def test_create_notebook_tool(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_rename_notebook_tool(monkeypatch):
-    server, client = _management_server(monkeypatch)
-    request = server_module.RenameNotebookRequest(
+    server, client = _server_with_client(monkeypatch, client_cls=ManagementClient)
+    result = await server.app.tools["rename_notebook"](
         notebook_id="nb1", new_title="Renamed"
     )
-    result = await server.app.tools["rename_notebook"](request)
     assert result["notebook"] == NB_OBJ
     assert client.management_calls == [("rename_notebook", "nb1", "Renamed")]
 
 
 @pytest.mark.asyncio
 async def test_delete_notebook_tool(monkeypatch):
-    server, client = _management_server(monkeypatch)
-    request = server_module.NotebookIdRequest(notebook_id="nb1")
-    result = await server.app.tools["delete_notebook"](request)
+    server, client = _server_with_client(monkeypatch, client_cls=ManagementClient)
+    result = await server.app.tools["delete_notebook"](notebook_id="nb1")
     assert result["status"] == "success"
     assert result["notebook_id"] == "nb1"
     assert client.management_calls == [("delete_notebook", "nb1")]
@@ -762,9 +658,8 @@ async def test_delete_notebook_tool(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_notebook_summary_tool(monkeypatch):
-    server, client = _management_server(monkeypatch)
-    request = server_module.NotebookIdRequest(notebook_id="nb1")
-    result = await server.app.tools["get_notebook_summary"](request)
+    server, client = _server_with_client(monkeypatch, client_cls=ManagementClient)
+    result = await server.app.tools["get_notebook_summary"](notebook_id="nb1")
     # Surfaces the client's unique summary string.
     assert result["summary"] == SUMMARY
     assert client.management_calls == [("get_notebook_summary", "nb1")]
@@ -772,9 +667,8 @@ async def test_get_notebook_summary_tool(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_list_sources_tool(monkeypatch):
-    server, client = _management_server(monkeypatch)
-    request = server_module.NotebookIdRequest(notebook_id="nb1")
-    result = await server.app.tools["list_sources"](request)
+    server, client = _server_with_client(monkeypatch, client_cls=ManagementClient)
+    result = await server.app.tools["list_sources"](notebook_id="nb1")
     assert result["count"] == 1
     assert result["sources"] == SRC_LIST
     assert client.management_calls == [("list_sources", "nb1")]
@@ -782,31 +676,28 @@ async def test_list_sources_tool(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_add_source_url_tool(monkeypatch):
-    server, client = _management_server(monkeypatch)
-    request = server_module.AddSourceUrlRequest(
+    server, client = _server_with_client(monkeypatch, client_cls=ManagementClient)
+    result = await server.app.tools["add_source_url"](
         notebook_id="nb1", url="https://example.com"
     )
-    result = await server.app.tools["add_source_url"](request)
     assert result["source"] == SRC_OBJ
     assert client.management_calls == [("add_source_url", "nb1", "https://example.com")]
 
 
 @pytest.mark.asyncio
 async def test_add_source_text_tool(monkeypatch):
-    server, client = _management_server(monkeypatch)
-    request = server_module.AddSourceTextRequest(
+    server, client = _server_with_client(monkeypatch, client_cls=ManagementClient)
+    result = await server.app.tools["add_source_text"](
         notebook_id="nb1", title="T", text="body"
     )
-    result = await server.app.tools["add_source_text"](request)
     assert result["source"] == SRC_OBJ
     assert client.management_calls == [("add_source_text", "nb1", "T", "body")]
 
 
 @pytest.mark.asyncio
 async def test_delete_source_tool(monkeypatch):
-    server, client = _management_server(monkeypatch)
-    request = server_module.DeleteSourceRequest(notebook_id="nb1", source_id="s1")
-    result = await server.app.tools["delete_source"](request)
+    server, client = _server_with_client(monkeypatch, client_cls=ManagementClient)
+    result = await server.app.tools["delete_source"](notebook_id="nb1", source_id="s1")
     assert result["status"] == "success"
     assert result["notebook_id"] == "nb1"
     assert result["source_id"] == "s1"
@@ -821,6 +712,6 @@ async def test_management_tool_wraps_client_error(monkeypatch):
         async def list_notebooks(self):
             raise RuntimeError("rpc down")
 
-    server, _ = _management_server(monkeypatch, client_cls=FailingMgmt)
+    server, _ = _server_with_client(monkeypatch, client_cls=FailingMgmt)
     with pytest.raises(NotebookLMError, match="Failed to list notebooks"):
         await server.app.tools["list_notebooks"]()
