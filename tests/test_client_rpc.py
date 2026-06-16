@@ -55,6 +55,9 @@ class _Backend:
         audio_list=None,
         gen_status=None,
         share_status=None,
+        video_list=None,
+        mind_maps=None,
+        mind_map_get=None,
     ):
         self.calls: list[tuple] = []
         self._notebooks_data = list(notebooks) if notebooks is not None else []
@@ -64,6 +67,10 @@ class _Backend:
         self._source_get = dict(source_get) if source_get else {}
         self._fulltext = dict(fulltext) if fulltext else {}
         self._audio_list = list(audio_list) if audio_list is not None else []
+        self._video_list = list(video_list) if video_list is not None else []
+        self._mind_maps_data = list(mind_maps) if mind_maps is not None else []
+        self._mind_map_get = dict(mind_map_get) if mind_map_get else {}
+        self._mind_map_tree = {"nodes": ["root"]}
         self._gen_status = gen_status or SimpleNamespace(
             task_id="task-1", status="generating", url=None, error=None
         )
@@ -87,6 +94,7 @@ class _Backend:
         self.chat = _ChatAPI(self)
         self.artifacts = _ArtifactsAPI(self)
         self.sharing = _SharingAPI(self)
+        self.mind_maps = _MindMapsAPI(self)
 
 
 class _NotebooksAPI:
@@ -171,6 +179,41 @@ class _ArtifactsAPI:
     async def list_audio(self, notebook_id):
         self._b.calls.append(("artifacts.list_audio", notebook_id))
         return list(self._b._audio_list)
+
+    async def generate_video(self, notebook_id, language="en", instructions=None):
+        self._b.calls.append(
+            ("artifacts.generate_video", notebook_id, language, instructions)
+        )
+        return self._b._gen_status
+
+    async def list_video(self, notebook_id):
+        self._b.calls.append(("artifacts.list_video", notebook_id))
+        return list(self._b._video_list)
+
+
+class _MindMapsAPI:
+    def __init__(self, backend):
+        self._b = backend
+
+    async def generate(self, notebook_id, source_ids=None, *, kind, language="en"):
+        self._b.calls.append(
+            ("mind_maps.generate", notebook_id, getattr(kind, "name", kind))
+        )
+        return SimpleNamespace(
+            id="mm-new", notebook_id=notebook_id, title="Map", kind=kind, tree={}
+        )
+
+    async def list(self, notebook_id):
+        self._b.calls.append(("mind_maps.list", notebook_id))
+        return list(self._b._mind_maps_data)
+
+    async def get_tree(self, notebook_id, mind_map_id):
+        self._b.calls.append(("mind_maps.get_tree", notebook_id, mind_map_id))
+        return self._b._mind_map_tree
+
+    async def get(self, notebook_id, mind_map_id):
+        self._b.calls.append(("mind_maps.get", notebook_id, mind_map_id))
+        return self._b._mind_map_get.get(mind_map_id)
 
 
 class _SharingAPI:
@@ -878,3 +921,109 @@ def test_share_notebook_unknown_permission_falls_back_to_viewer(monkeypatch, tmp
 
     call = [c for c in backend.calls if c[0] == "sharing.add_user"][0]
     assert call[3] == "VIEWER"
+
+
+# --------------------------------------------------------------------------- #
+# Video Overview
+# --------------------------------------------------------------------------- #
+def test_generate_video_overview(monkeypatch, tmp_path):
+    backend = _Backend(
+        gen_status=SimpleNamespace(
+            task_id="v-1", status="in_progress", url=None, error=None
+        )
+    )
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(client.generate_video_overview("nb1", language="vi"))
+
+    assert ("artifacts.generate_video", "nb1", "vi", None) in backend.calls
+    assert result["task_id"] == "v-1"
+    assert result["status"] == "in_progress"
+
+
+def test_list_video_overviews(monkeypatch, tmp_path):
+    art = SimpleNamespace(
+        id="v9", title="Explainer", status="ready", url="https://x/v9"
+    )
+    backend = _Backend(video_list=[art])
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    videos = asyncio.run(client.list_video_overviews("nb1"))
+
+    assert ("artifacts.list_video", "nb1") in backend.calls
+    assert videos == [
+        {"id": "v9", "title": "Explainer", "status": "ready", "url": "https://x/v9"}
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Mind Map
+# --------------------------------------------------------------------------- #
+def test_generate_mind_map_maps_kind(monkeypatch, tmp_path):
+    backend = _Backend()
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(client.generate_mind_map("nb1", kind="note_backed"))
+
+    # The string kind is mapped to the MindMapKind enum (NOTE_BACKED).
+    assert ("mind_maps.generate", "nb1", "NOTE_BACKED") in backend.calls
+    assert result["id"] == "mm-new"
+    # A bare dict (no tree) is returned for generate.
+    assert "tree" not in result
+
+
+def test_generate_mind_map_unknown_kind_falls_back_interactive(monkeypatch, tmp_path):
+    backend = _Backend()
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    asyncio.run(client.generate_mind_map("nb1", kind="bogus"))
+
+    call = [c for c in backend.calls if c[0] == "mind_maps.generate"][0]
+    assert call[2] == "INTERACTIVE"
+
+
+def test_list_mind_maps(monkeypatch, tmp_path):
+    mm = SimpleNamespace(id="mm1", notebook_id="nb1", title="M", kind="INTERACTIVE")
+    backend = _Backend(mind_maps=[mm])
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    maps = asyncio.run(client.list_mind_maps("nb1"))
+
+    assert ("mind_maps.list", "nb1") in backend.calls
+    assert maps == [
+        {"id": "mm1", "title": "M", "kind": "INTERACTIVE", "notebook_id": "nb1"}
+    ]
+
+
+def test_get_mind_map_includes_tree(monkeypatch, tmp_path):
+    mm = SimpleNamespace(
+        id="mm1", notebook_id="nb1", title="M", kind="INTERACTIVE", tree={"root": []}
+    )
+    backend = _Backend(mind_map_get={"mm1": mm})
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(client.get_mind_map("nb1", "mm1"))
+
+    assert ("mind_maps.get", "nb1", "mm1") in backend.calls
+    assert result["tree"] == {"root": []}
+
+
+def test_get_mind_map_missing_raises(monkeypatch, tmp_path):
+    backend = _Backend(mind_map_get={})  # get returns None
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+    with pytest.raises(NavigationError, match="not found"):
+        asyncio.run(client.get_mind_map("nb1", "missing"))
+
+
+def test_get_mind_map_fetches_tree_when_absent(monkeypatch, tmp_path):
+    # When the map object has no inline tree, the client fetches it via get_tree.
+    mm = SimpleNamespace(
+        id="mm1", notebook_id="nb1", title="M", kind="INTERACTIVE", tree=None
+    )
+    backend = _Backend(mind_map_get={"mm1": mm})
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(client.get_mind_map("nb1", "mm1"))
+
+    assert ("mind_maps.get_tree", "nb1", "mm1") in backend.calls
+    assert result["tree"] == {"nodes": ["root"]}

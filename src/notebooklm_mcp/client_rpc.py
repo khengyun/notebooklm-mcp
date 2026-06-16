@@ -81,6 +81,18 @@ def _gen_status_dict(s: Any) -> Dict[str, Any]:
     }
 
 
+def _mind_map_dict(mm: Any, include_tree: bool = False) -> Dict[str, Any]:
+    out = {
+        "id": getattr(mm, "id", None),
+        "title": getattr(mm, "title", None),
+        "kind": _jsonable(getattr(mm, "kind", None)),
+        "notebook_id": getattr(mm, "notebook_id", None),
+    }
+    if include_tree:
+        out["tree"] = _jsonable(getattr(mm, "tree", None))
+    return out
+
+
 def _share_status_dict(s: Any) -> Dict[str, Any]:
     return {
         "notebook_id": getattr(s, "notebook_id", None),
@@ -313,6 +325,66 @@ class NotebookLMRPCClient:
         return [
             _artifact_dict(a) for a in await backend.artifacts.list_audio(notebook_id)
         ]
+
+    # ------------------------------------------------------------------ #
+    # Video Overview
+    # ------------------------------------------------------------------ #
+    async def generate_video_overview(
+        self,
+        notebook_id: str,
+        instructions: Optional[str] = None,
+        language: str = "en",
+    ) -> Dict[str, Any]:
+        """Request a Video Overview. Generation runs server-side; the returned
+        status carries the task and (when ready) the video URL."""
+        backend = self._require_backend()
+        status = await backend.artifacts.generate_video(
+            notebook_id, language=language, instructions=instructions
+        )
+        return _gen_status_dict(status)
+
+    async def list_video_overviews(self, notebook_id: str) -> List[Dict[str, Any]]:
+        """List the Video Overviews generated for a notebook."""
+        backend = self._require_backend()
+        return [
+            _artifact_dict(a) for a in await backend.artifacts.list_video(notebook_id)
+        ]
+
+    # ------------------------------------------------------------------ #
+    # Mind Map
+    # ------------------------------------------------------------------ #
+    async def generate_mind_map(
+        self, notebook_id: str, kind: str = "interactive"
+    ) -> Dict[str, Any]:
+        """Generate a mind map (kind: interactive | note_backed)."""
+        from notebooklm import MindMapKind
+
+        mm_kind = getattr(MindMapKind, kind.upper(), MindMapKind.INTERACTIVE)
+        backend = self._require_backend()
+        mind_map = await backend.mind_maps.generate(notebook_id, kind=mm_kind)
+        return _mind_map_dict(mind_map)
+
+    async def list_mind_maps(self, notebook_id: str) -> List[Dict[str, Any]]:
+        """List the mind maps in a notebook."""
+        backend = self._require_backend()
+        return [_mind_map_dict(mm) for mm in await backend.mind_maps.list(notebook_id)]
+
+    async def get_mind_map(self, notebook_id: str, mind_map_id: str) -> Dict[str, Any]:
+        """Get a mind map including its node tree."""
+        backend = self._require_backend()
+        mind_map = await backend.mind_maps.get(notebook_id, mind_map_id)
+        if mind_map is None:
+            raise NavigationError(f"Mind map {mind_map_id} not found")
+        result = _mind_map_dict(mind_map, include_tree=True)
+        if result.get("tree") is None:
+            # The map object may carry no inline tree; fetch the nodes directly.
+            try:
+                result["tree"] = _jsonable(
+                    await backend.mind_maps.get_tree(notebook_id, mind_map_id)
+                )
+            except Exception as exc:  # noqa: BLE001 - tree is best-effort
+                logger.debug(f"mind map get_tree failed: {exc}")
+        return result
 
     # ------------------------------------------------------------------ #
     # Sharing
