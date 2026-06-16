@@ -19,12 +19,12 @@ notebooklm-mcp -c notebooklm-config.json server          # MCP server (stdio | h
 notebooklm-mcp -c notebooklm-config.json chat -m "..."   # quick chat from the CLI
 ```
 
-## Tools (23)
+## Tools (28)
 
 - **Chat:** `send_chat_message`, `get_chat_response`, `chat_with_notebook`, `navigate_to_notebook`, `get`/`set_default_notebook`, `healthcheck`
 - **Manage:** `list`/`create`/`rename`/`delete_notebook`, `get_notebook_summary`, `list_sources`, `add_source_url`/`add_source_text`/`delete_source`
 - **Compose:** `copy_source`, `create_notebook_from_sources` (merge sources across notebooks)
-- **Audio:** `generate_audio_overview`, `list_audio_overviews`
+- **Studio:** `generate_audio_overview`/`list_audio_overviews`, `generate_video_overview`/`list_video_overviews`, `generate_mind_map`/`list_mind_maps`/`get_mind_map`
 - **Share:** `get_share_status`, `set_notebook_public`, `share_notebook_with_user`
 
 MIT License

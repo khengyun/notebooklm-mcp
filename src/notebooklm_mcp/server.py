@@ -333,6 +333,63 @@ class NotebookLMFastMCP:
             return {"status": "success", "count": len(audios), "audio": audios}
 
         # ------------------------------------------------------------------ #
+        # Video Overview
+        # ------------------------------------------------------------------ #
+        @self.app.tool()
+        @_tool("Failed to generate video overview")
+        async def generate_video_overview(
+            notebook_id: str, instructions: Optional[str] = None, language: str = "en"
+        ) -> Dict[str, Any]:
+            """Generate a Video Overview for a notebook. Generation runs
+            server-side; poll with list_video_overviews for the result."""
+            client = await self._ensure_client()
+            result = await client.generate_video_overview(
+                notebook_id, instructions=instructions, language=language
+            )
+            return {"status": "success", "generation": result}
+
+        @self.app.tool()
+        @_tool("Failed to list video overviews")
+        async def list_video_overviews(notebook_id: str) -> Dict[str, Any]:
+            """List the Video Overviews generated for a notebook."""
+            client = await self._ensure_client()
+            videos = await client.list_video_overviews(notebook_id)
+            return {"status": "success", "count": len(videos), "video": videos}
+
+        # ------------------------------------------------------------------ #
+        # Mind Map
+        # ------------------------------------------------------------------ #
+        @self.app.tool()
+        @_tool("Failed to generate mind map")
+        async def generate_mind_map(
+            notebook_id: str, kind: str = "interactive"
+        ) -> Dict[str, Any]:
+            """Generate a mind map for a notebook (kind: interactive | note_backed)."""
+            client = await self._ensure_client()
+            mind_map = await client.generate_mind_map(notebook_id, kind=kind)
+            return {"status": "success", "mind_map": mind_map}
+
+        @self.app.tool()
+        @_tool("Failed to list mind maps")
+        async def list_mind_maps(notebook_id: str) -> Dict[str, Any]:
+            """List the mind maps in a notebook."""
+            client = await self._ensure_client()
+            mind_maps = await client.list_mind_maps(notebook_id)
+            return {
+                "status": "success",
+                "count": len(mind_maps),
+                "mind_maps": mind_maps,
+            }
+
+        @self.app.tool()
+        @_tool("Failed to get mind map")
+        async def get_mind_map(notebook_id: str, mind_map_id: str) -> Dict[str, Any]:
+            """Get a mind map including its node tree."""
+            client = await self._ensure_client()
+            mind_map = await client.get_mind_map(notebook_id, mind_map_id)
+            return {"status": "success", "mind_map": mind_map}
+
+        # ------------------------------------------------------------------ #
         # Sharing
         # ------------------------------------------------------------------ #
         @self.app.tool()
