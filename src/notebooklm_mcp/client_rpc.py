@@ -52,6 +52,45 @@ def _source_dict(src: Any) -> Dict[str, Any]:
     }
 
 
+def _jsonable(value: Any) -> Any:
+    """Coerce backend objects/enums into JSON-serializable values."""
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    return str(value)
+
+
+def _artifact_dict(art: Any) -> Dict[str, Any]:
+    return {
+        "id": getattr(art, "id", None),
+        "title": getattr(art, "title", None),
+        "status": _jsonable(getattr(art, "status", None)),
+        "url": getattr(art, "url", None),
+    }
+
+
+def _gen_status_dict(s: Any) -> Dict[str, Any]:
+    return {
+        "task_id": getattr(s, "task_id", None),
+        "status": _jsonable(getattr(s, "status", None)),
+        "url": getattr(s, "url", None),
+        "error": getattr(s, "error", None),
+    }
+
+
+def _share_status_dict(s: Any) -> Dict[str, Any]:
+    return {
+        "notebook_id": getattr(s, "notebook_id", None),
+        "is_public": getattr(s, "is_public", None),
+        "view_level": _jsonable(getattr(s, "view_level", None)),
+        "share_url": getattr(s, "share_url", None),
+        "shared_users": _jsonable(getattr(s, "shared_users", None)),
+    }
+
+
 class NotebookLMRPCClient:
     """High-level RPC client (notebooklm-py backend) with management support."""
 
@@ -250,6 +289,56 @@ class NotebookLMRPCClient:
             except Exception as exc:  # noqa: BLE001 - report, don't abort the merge
                 failed.append({**ref, "error": str(exc)})
         return {"notebook": notebook, "copied": copied, "failed": failed}
+
+    # ------------------------------------------------------------------ #
+    # Audio Overview (podcast)
+    # ------------------------------------------------------------------ #
+    async def generate_audio_overview(
+        self,
+        notebook_id: str,
+        instructions: Optional[str] = None,
+        language: str = "en",
+    ) -> Dict[str, Any]:
+        """Request an Audio Overview (podcast). Generation runs server-side;
+        the returned status carries the task and (when ready) the audio URL."""
+        backend = self._require_backend()
+        status = await backend.artifacts.generate_audio(
+            notebook_id, language=language, instructions=instructions
+        )
+        return _gen_status_dict(status)
+
+    async def list_audio_overviews(self, notebook_id: str) -> List[Dict[str, Any]]:
+        """List the Audio Overviews generated for a notebook."""
+        backend = self._require_backend()
+        return [
+            _artifact_dict(a) for a in await backend.artifacts.list_audio(notebook_id)
+        ]
+
+    # ------------------------------------------------------------------ #
+    # Sharing
+    # ------------------------------------------------------------------ #
+    async def get_share_status(self, notebook_id: str) -> Dict[str, Any]:
+        """Read a notebook's current sharing status (read-only)."""
+        backend = self._require_backend()
+        return _share_status_dict(await backend.sharing.get_status(notebook_id))
+
+    async def set_notebook_public(
+        self, notebook_id: str, public: bool
+    ) -> Dict[str, Any]:
+        """Toggle public (link) sharing for a notebook."""
+        backend = self._require_backend()
+        return _share_status_dict(await backend.sharing.set_public(notebook_id, public))
+
+    async def share_notebook_with_user(
+        self, notebook_id: str, email: str, permission: str = "viewer"
+    ) -> Dict[str, Any]:
+        """Share a notebook with a specific person by email."""
+        from notebooklm import SharePermission
+
+        perm = getattr(SharePermission, permission.upper(), SharePermission.VIEWER)
+        backend = self._require_backend()
+        result = await backend.sharing.add_user(notebook_id, email, permission=perm)
+        return _share_status_dict(result)
 
     # ------------------------------------------------------------------ #
     # Helpers
