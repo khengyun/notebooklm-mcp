@@ -6,9 +6,22 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from shutil import copytree, rmtree
 from typing import Any, Dict, Optional
 
 from .exceptions import ConfigurationError
+
+
+def _copy_tree(src: Path, dest: Path) -> None:
+    """Copy ``src`` onto ``dest``, replacing ``dest`` if it already exists.
+
+    Shared by the profile import/export paths (CLI commands and
+    :meth:`ServerConfig.setup_profile`) so the wipe-then-copy logic lives in
+    one place. Callers are responsible for validating that ``src`` exists.
+    """
+    if dest.exists():
+        rmtree(dest)
+    copytree(src, dest)
 
 
 @dataclass
@@ -32,7 +45,6 @@ class AuthConfig:
 
     # Quick setup options
     import_profile_from: Optional[str] = None  # Path to existing Chrome profile
-    export_profile_to: Optional[str] = None  # Path to export current profile
     skip_manual_login: bool = False  # Skip manual login if profile exists
 
 
@@ -165,43 +177,18 @@ class ServerConfig:
 
     def setup_profile(self) -> None:
         """Setup Chrome profile based on configuration"""
-        from shutil import copytree, rmtree
-
         profile_path = Path(self.auth.profile_dir)
 
         # Import existing profile if specified
         if self.auth.import_profile_from and self.auth.import_profile_from.strip():
             import_path = Path(self.auth.import_profile_from)
-
-            if profile_path.exists():
-                rmtree(profile_path)
-
-            copytree(import_path, profile_path)
+            _copy_tree(import_path, profile_path)
             print(f"✅ Imported profile from: {import_path}")
 
         # Create profile directory if it doesn't exist
         elif not profile_path.exists():
             profile_path.mkdir(parents=True, exist_ok=True)
             print(f"✅ Created new profile directory: {profile_path}")
-
-    def export_profile(self) -> None:
-        """Export current Chrome profile to specified location"""
-        if not self.auth.export_profile_to:
-            return
-
-        from shutil import copytree, rmtree
-
-        source_path = Path(self.auth.profile_dir)
-        export_path = Path(self.auth.export_profile_to)
-
-        if not source_path.exists():
-            raise ConfigurationError(f"Source profile does not exist: {source_path}")
-
-        if export_path.exists():
-            rmtree(export_path)
-
-        copytree(source_path, export_path)
-        print(f"✅ Exported profile to: {export_path}")
 
 
 def load_config(config_path: Optional[str] = None) -> ServerConfig:
