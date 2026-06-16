@@ -5,7 +5,8 @@ Modern MCP server implementation using FastMCP v2 framework
 """
 
 import asyncio
-from typing import Any, Dict, Optional
+import functools
+from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
 from fastmcp import FastMCP
 from loguru import logger
@@ -14,6 +15,35 @@ from pydantic import BaseModel, Field
 from .client import NotebookLMClient
 from .config import ServerConfig
 from .exceptions import NotebookLMError
+
+_T = TypeVar("_T")
+
+
+def _tool(
+    error_prefix: str,
+) -> Callable[[Callable[..., Awaitable[_T]]], Callable[..., Awaitable[_T]]]:
+    """Wrap a tool coroutine so any exception is logged and re-raised as a
+    :class:`NotebookLMError` with a stable ``"<error_prefix>: <exc>"`` message.
+
+    This collapses the repeated ``try/except Exception`` boilerplate that each
+    tool used to carry. The raised message text is part of the public contract
+    (tests match on it), so it is built solely from ``error_prefix``.
+    """
+
+    def decorator(
+        func: Callable[..., Awaitable[_T]],
+    ) -> Callable[..., Awaitable[_T]]:
+        @functools.wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> _T:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"{error_prefix}: {e}")
+                raise NotebookLMError(f"{error_prefix}: {e}")
+
+        return wrapper
+
+    return decorator
 
 
 # Pydantic models for type-safe tool parameters
@@ -191,105 +221,84 @@ class NotebookLMFastMCP:
                 }
 
         @self.app.tool()
+        @_tool("Failed to send message")
         async def send_chat_message(request: SendMessageRequest) -> Dict[str, Any]:
             """Send a message to NotebookLM chat interface."""
-            try:
-                client = await self._ensure_client()
-                await client.send_message(request.message)
+            client = await self._ensure_client()
+            await client.send_message(request.message)
 
-                response_data = {"status": "sent", "message": request.message}
+            response_data = {"status": "sent", "message": request.message}
 
-                if request.wait_for_response:
-                    response = await client.get_response()
-                    response_data["response"] = response
-                    response_data["status"] = "completed"
+            if request.wait_for_response:
+                response = await client.get_response()
+                response_data["response"] = response
+                response_data["status"] = "completed"
 
-                logger.info(f"Message sent successfully: {request.message[:50]}...")
-                return response_data
-
-            except Exception as e:
-                logger.error(f"Failed to send message: {e}")
-                raise NotebookLMError(f"Failed to send message: {e}")
+            logger.info(f"Message sent successfully: {request.message[:50]}...")
+            return response_data
 
         @self.app.tool()
+        @_tool("Failed to get response")
         async def get_chat_response(request: GetResponseRequest) -> Dict[str, Any]:
             """Get the latest response from NotebookLM with streaming support."""
-            try:
-                client = await self._ensure_client()
-                response = await client.get_response()
+            client = await self._ensure_client()
+            response = await client.get_response()
 
-                logger.info("Response retrieved successfully")
-                return {
-                    "status": "success",
-                    "response": response,
-                    "message": "Response retrieved successfully",
-                }
-
-            except Exception as e:
-                logger.error(f"Failed to get response: {e}")
-                raise NotebookLMError(f"Failed to get response: {e}")
+            logger.info("Response retrieved successfully")
+            return {
+                "status": "success",
+                "response": response,
+                "message": "Response retrieved successfully",
+            }
 
         @self.app.tool()
+        @_tool("Failed to get quick response")
         async def get_quick_response() -> Dict[str, Any]:
             """Get current response without waiting for completion."""
-            try:
-                client = await self._ensure_client()
-                response = await client.get_response()
+            client = await self._ensure_client()
+            response = await client.get_response()
 
-                return {
-                    "status": "success",
-                    "response": response,
-                    "message": "Quick response retrieved",
-                }
-
-            except Exception as e:
-                logger.error(f"Failed to get quick response: {e}")
-                raise NotebookLMError(f"Failed to get quick response: {e}")
+            return {
+                "status": "success",
+                "response": response,
+                "message": "Quick response retrieved",
+            }
 
         @self.app.tool()
+        @_tool("Chat interaction failed")
         async def chat_with_notebook(request: ChatRequest) -> Dict[str, Any]:
             """Complete chat interaction: send message and get response."""
-            try:
-                client = await self._ensure_client()
+            client = await self._ensure_client()
 
-                # Switch notebook if specified
-                if request.notebook_id:
-                    await client.navigate_to_notebook(request.notebook_id)
-
-                # Send message and get response
-                await client.send_message(request.message)
-                response = await client.get_response()
-
-                logger.info(f"Chat completed: {request.message[:50]}...")
-                return {
-                    "status": "success",
-                    "message": request.message,
-                    "response": response,
-                    "notebook_id": request.notebook_id
-                    or self.config.default_notebook_id,
-                }
-
-            except Exception as e:
-                logger.error(f"Chat interaction failed: {e}")
-                raise NotebookLMError(f"Chat interaction failed: {e}")
-
-        @self.app.tool()
-        async def navigate_to_notebook(request: NavigateRequest) -> Dict[str, Any]:
-            """Navigate to a specific notebook."""
-            try:
-                client = await self._ensure_client()
+            # Switch notebook if specified
+            if request.notebook_id:
                 await client.navigate_to_notebook(request.notebook_id)
 
-                logger.info(f"Navigated to notebook: {request.notebook_id}")
-                return {
-                    "status": "success",
-                    "notebook_id": request.notebook_id,
-                    "message": f"Successfully navigated to notebook {request.notebook_id}",
-                }
+            # Send message and get response
+            await client.send_message(request.message)
+            response = await client.get_response()
 
-            except Exception as e:
-                logger.error(f"Navigation failed: {e}")
-                raise NotebookLMError(f"Failed to navigate to notebook: {e}")
+            logger.info(f"Chat completed: {request.message[:50]}...")
+            return {
+                "status": "success",
+                "message": request.message,
+                "response": response,
+                "notebook_id": request.notebook_id or self.config.default_notebook_id,
+            }
+
+        @self.app.tool()
+        @_tool("Failed to navigate to notebook")
+        async def navigate_to_notebook(request: NavigateRequest) -> Dict[str, Any]:
+            """Navigate to a specific notebook."""
+            client = await self._ensure_client()
+            await client.navigate_to_notebook(request.notebook_id)
+
+            logger.info(f"Navigated to notebook: {request.notebook_id}")
+            return {
+                "status": "success",
+                "notebook_id": request.notebook_id,
+                "message": f"Successfully navigated to notebook {request.notebook_id}",
+            }
 
         @self.app.tool()
         async def get_default_notebook() -> Dict[str, Any]:
@@ -301,152 +310,121 @@ class NotebookLMFastMCP:
             }
 
         @self.app.tool()
+        @_tool("Failed to set default notebook")
         async def set_default_notebook(request: SetNotebookRequest) -> Dict[str, Any]:
             """Set the default notebook ID."""
-            try:
-                old_notebook = self.config.default_notebook_id
-                self.config.default_notebook_id = request.notebook_id
+            old_notebook = self.config.default_notebook_id
+            self.config.default_notebook_id = request.notebook_id
 
-                logger.info(
-                    f"Default notebook changed: {old_notebook} → {request.notebook_id}"
-                )
-                return {
-                    "status": "success",
-                    "old_notebook_id": old_notebook,
-                    "new_notebook_id": request.notebook_id,
-                    "message": f"Default notebook set to {request.notebook_id}",
-                }
-
-            except Exception as e:
-                logger.error(f"Failed to set default notebook: {e}")
-                raise NotebookLMError(f"Failed to set default notebook: {e}")
+            logger.info(
+                f"Default notebook changed: {old_notebook} → {request.notebook_id}"
+            )
+            return {
+                "status": "success",
+                "old_notebook_id": old_notebook,
+                "new_notebook_id": request.notebook_id,
+                "message": f"Default notebook set to {request.notebook_id}",
+            }
 
         # ------------------------------------------------------------------ #
         # Notebook & source management (RPC engine only)
         # ------------------------------------------------------------------ #
         @self.app.tool()
+        @_tool("Failed to list notebooks")
         async def list_notebooks() -> Dict[str, Any]:
             """List all notebooks in the account."""
-            try:
-                await self._ensure_client()
-                client = self._require_management()
-                notebooks = await client.list_notebooks()
-                return {
-                    "status": "success",
-                    "count": len(notebooks),
-                    "notebooks": notebooks,
-                }
-            except Exception as e:
-                logger.error(f"Failed to list notebooks: {e}")
-                raise NotebookLMError(f"Failed to list notebooks: {e}")
+            await self._ensure_client()
+            client = self._require_management()
+            notebooks = await client.list_notebooks()
+            return {
+                "status": "success",
+                "count": len(notebooks),
+                "notebooks": notebooks,
+            }
 
         @self.app.tool()
+        @_tool("Failed to create notebook")
         async def create_notebook(request: CreateNotebookRequest) -> Dict[str, Any]:
             """Create a new notebook with the given title."""
-            try:
-                await self._ensure_client()
-                client = self._require_management()
-                notebook = await client.create_notebook(request.title)
-                return {"status": "success", "notebook": notebook}
-            except Exception as e:
-                logger.error(f"Failed to create notebook: {e}")
-                raise NotebookLMError(f"Failed to create notebook: {e}")
+            await self._ensure_client()
+            client = self._require_management()
+            notebook = await client.create_notebook(request.title)
+            return {"status": "success", "notebook": notebook}
 
         @self.app.tool()
+        @_tool("Failed to rename notebook")
         async def rename_notebook(request: RenameNotebookRequest) -> Dict[str, Any]:
             """Rename a notebook."""
-            try:
-                await self._ensure_client()
-                client = self._require_management()
-                notebook = await client.rename_notebook(
-                    request.notebook_id, request.new_title
-                )
-                return {"status": "success", "notebook": notebook}
-            except Exception as e:
-                logger.error(f"Failed to rename notebook: {e}")
-                raise NotebookLMError(f"Failed to rename notebook: {e}")
+            await self._ensure_client()
+            client = self._require_management()
+            notebook = await client.rename_notebook(
+                request.notebook_id, request.new_title
+            )
+            return {"status": "success", "notebook": notebook}
 
         @self.app.tool()
+        @_tool("Failed to delete notebook")
         async def delete_notebook(request: NotebookIdRequest) -> Dict[str, Any]:
             """Delete a notebook by ID."""
-            try:
-                await self._ensure_client()
-                client = self._require_management()
-                await client.delete_notebook(request.notebook_id)
-                return {"status": "success", "notebook_id": request.notebook_id}
-            except Exception as e:
-                logger.error(f"Failed to delete notebook: {e}")
-                raise NotebookLMError(f"Failed to delete notebook: {e}")
+            await self._ensure_client()
+            client = self._require_management()
+            await client.delete_notebook(request.notebook_id)
+            return {"status": "success", "notebook_id": request.notebook_id}
 
         @self.app.tool()
+        @_tool("Failed to get notebook summary")
         async def get_notebook_summary(request: NotebookIdRequest) -> Dict[str, Any]:
             """Get the AI summary of a notebook."""
-            try:
-                await self._ensure_client()
-                client = self._require_management()
-                summary = await client.get_notebook_summary(request.notebook_id)
-                return {"status": "success", "summary": summary}
-            except Exception as e:
-                logger.error(f"Failed to get notebook summary: {e}")
-                raise NotebookLMError(f"Failed to get notebook summary: {e}")
+            await self._ensure_client()
+            client = self._require_management()
+            summary = await client.get_notebook_summary(request.notebook_id)
+            return {"status": "success", "summary": summary}
 
         @self.app.tool()
+        @_tool("Failed to list sources")
         async def list_sources(request: NotebookIdRequest) -> Dict[str, Any]:
             """List the sources in a notebook."""
-            try:
-                await self._ensure_client()
-                client = self._require_management()
-                sources = await client.list_sources(request.notebook_id)
-                return {
-                    "status": "success",
-                    "count": len(sources),
-                    "sources": sources,
-                }
-            except Exception as e:
-                logger.error(f"Failed to list sources: {e}")
-                raise NotebookLMError(f"Failed to list sources: {e}")
+            await self._ensure_client()
+            client = self._require_management()
+            sources = await client.list_sources(request.notebook_id)
+            return {
+                "status": "success",
+                "count": len(sources),
+                "sources": sources,
+            }
 
         @self.app.tool()
+        @_tool("Failed to add URL source")
         async def add_source_url(request: AddSourceUrlRequest) -> Dict[str, Any]:
             """Add a web URL (or YouTube link) as a source to a notebook."""
-            try:
-                await self._ensure_client()
-                client = self._require_management()
-                source = await client.add_source_url(request.notebook_id, request.url)
-                return {"status": "success", "source": source}
-            except Exception as e:
-                logger.error(f"Failed to add URL source: {e}")
-                raise NotebookLMError(f"Failed to add URL source: {e}")
+            await self._ensure_client()
+            client = self._require_management()
+            source = await client.add_source_url(request.notebook_id, request.url)
+            return {"status": "success", "source": source}
 
         @self.app.tool()
+        @_tool("Failed to add text source")
         async def add_source_text(request: AddSourceTextRequest) -> Dict[str, Any]:
             """Add raw text as a source to a notebook."""
-            try:
-                await self._ensure_client()
-                client = self._require_management()
-                source = await client.add_source_text(
-                    request.notebook_id, request.title, request.text
-                )
-                return {"status": "success", "source": source}
-            except Exception as e:
-                logger.error(f"Failed to add text source: {e}")
-                raise NotebookLMError(f"Failed to add text source: {e}")
+            await self._ensure_client()
+            client = self._require_management()
+            source = await client.add_source_text(
+                request.notebook_id, request.title, request.text
+            )
+            return {"status": "success", "source": source}
 
         @self.app.tool()
+        @_tool("Failed to delete source")
         async def delete_source(request: DeleteSourceRequest) -> Dict[str, Any]:
             """Delete a source from a notebook."""
-            try:
-                await self._ensure_client()
-                client = self._require_management()
-                await client.delete_source(request.notebook_id, request.source_id)
-                return {
-                    "status": "success",
-                    "notebook_id": request.notebook_id,
-                    "source_id": request.source_id,
-                }
-            except Exception as e:
-                logger.error(f"Failed to delete source: {e}")
-                raise NotebookLMError(f"Failed to delete source: {e}")
+            await self._ensure_client()
+            client = self._require_management()
+            await client.delete_source(request.notebook_id, request.source_id)
+            return {
+                "status": "success",
+                "notebook_id": request.notebook_id,
+                "source_id": request.source_id,
+            }
 
     async def start(
         self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000

@@ -82,8 +82,8 @@ tasks:
     cmds:
       - echo "⚫ Formatting with Black..."
       - uv run black src/ tests/
-      - echo "📊 Sorting imports..."
-      - uv run isort src/ tests/
+      - echo "📊 Sorting imports with Ruff..."
+      - uv run ruff check --select I --fix src/ tests/
     deps:
       - task: install
 

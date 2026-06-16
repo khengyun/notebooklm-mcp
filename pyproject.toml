@@ -48,7 +48,6 @@ dependencies = [
     # Logging and utilities
     "loguru>=0.7.2",
     "typing-extensions>=4.0.0",
-    "psutil>=5.9.0",
     # TOML parsing (for Python < 3.11 compatibility)
     "tomli>=2.0.0; python_version<'3.11'",
 ]
@@ -62,7 +61,6 @@ dev = [
     "pytest-mock>=3.11.0",
     "ruff>=0.1.0",
     "black>=23.0.0",
-    "isort>=5.12.0",
     "mypy>=1.5.0",
     "pre-commit>=3.3.0",
 ]
@@ -76,7 +74,6 @@ test = [
 lint = [
     "ruff>=0.1.0",
     "black>=23.0.0",
-    "isort>=5.12.0",
     "mypy>=1.5.0",
 ]
 build = [
@@ -84,12 +81,6 @@ build = [
     "twine>=4.0.0",
     "setuptools>=65.0",
     "wheel",
-]
-docs = [
-    "mkdocs>=1.5.0",
-    "mkdocs-material>=9.2.0",
-    "mkdocs-mermaid2-plugin>=1.1.0",
-    "mkdocstrings[python]>=0.23.0",
 ]
 
 # UV Configuration
@@ -153,11 +144,14 @@ extend-exclude = '''
 )/
 '''
 
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-line_length = 88
-known_first_party = ["notebooklm_mcp"]
+[tool.ruff.lint]
+# Ruff's default rule set (E4/E7/E9 + F) plus I for import-sorting (replaces
+# isort). Listing the defaults explicitly keeps behavior identical while
+# enabling the import-sort rule.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["notebooklm_mcp"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -188,11 +182,13 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
+    "--tb=short",
     "-p", "no:napari",
     "-p", "no:napari-plugin-engine",
     "-p", "no:npe2",
 ]
 testpaths = ["tests"]
+norecursedirs = ["examples"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

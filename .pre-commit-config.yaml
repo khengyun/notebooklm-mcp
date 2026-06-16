@@ -15,18 +15,6 @@ repos:
   - id: black
     language_version: python3
 
-- repo: https://github.com/pycqa/isort
-  rev: 5.12.0
-  hooks:
-  - id: isort
-    args: ["--profile", "black"]
-
-- repo: https://github.com/pycqa/flake8
-  rev: 6.0.0
-  hooks:
-  - id: flake8
-    additional_dependencies: [flake8-docstrings]
-
 # Mypy hook disabled due to types-all dependency conflicts
 # Use: task lint:mypy for manual mypy checking
 # - repo: https://github.com/pre-commit/mirrors-mypy

@@ -63,42 +63,22 @@ def test_save_to_file_creates_directories(tmp_path):
     assert saved["default_notebook_id"] == "nested"
 
 
-def test_setup_profile_import_and_export(tmp_path):
+def test_setup_profile_import(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     (source / "prefs.txt").write_text("data")
 
     destination = tmp_path / "profiles" / "primary"
-    export_target = tmp_path / "exported"
 
     config = ServerConfig(
         auth=AuthConfig(
             profile_dir=str(destination),
             import_profile_from=str(source),
-            export_profile_to=str(export_target),
         )
     )
 
     config.setup_profile()
     assert (destination / "prefs.txt").read_text() == "data"
-
-    (destination / "cache").write_text("cached")
-
-    config.export_profile()
-    assert (export_target / "prefs.txt").read_text() == "data"
-    assert (export_target / "cache").read_text() == "cached"
-
-
-def test_export_profile_requires_existing_source(tmp_path):
-    config = ServerConfig(
-        auth=AuthConfig(
-            profile_dir=str(tmp_path / "profile"),
-            export_profile_to=str(tmp_path / "exported"),
-        )
-    )
-
-    with pytest.raises(ConfigurationError, match="Source profile does not exist"):
-        config.export_profile()
 
 
 def test_load_config_prefers_local_file(tmp_path, monkeypatch):

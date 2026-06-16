@@ -56,9 +56,9 @@ class NotebookLMClient:
         self.current_notebook_id: Optional[str] = config.default_notebook_id
         self._is_authenticated = False
 
-    # Backwards-compatible alias: monitoring.py historically read
+    # Backwards-compatible alias for callers that historically read
     # ``client.driver``. The Playwright ``Page`` exposes ``.url`` like the old
-    # Selenium driver, so existing health checks keep working.
+    # Selenium driver, so existing consumers keep working.
     @property
     def driver(self) -> Optional[Page]:
         return self.page

@@ -14,9 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 
-import pytest
-
 import patchright.async_api as pw_module
+import pytest
 
 from notebooklm_mcp import auth_bridge
 from notebooklm_mcp.config import AuthConfig, ServerConfig

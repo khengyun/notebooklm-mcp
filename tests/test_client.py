@@ -12,12 +12,6 @@ the actual DOM-walking / selector-fallback / stability-poll logic is exercised.
 
 import patchright.async_api as pw
 import pytest
-
-from notebooklm_mcp import selectors as S
-from notebooklm_mcp.client import NotebookLMClient
-from notebooklm_mcp.config import ServerConfig
-from notebooklm_mcp.exceptions import AuthenticationError, ChatError, NavigationError
-
 from conftest import (
     FakeContext,
     FakeElement,
@@ -26,6 +20,11 @@ from conftest import (
     FakePlaywright,
     make_async_playwright,
 )
+
+from notebooklm_mcp import selectors as S
+from notebooklm_mcp.client import NotebookLMClient
+from notebooklm_mcp.config import ServerConfig
+from notebooklm_mcp.exceptions import AuthenticationError, ChatError, NavigationError
 
 # Real Playwright error classes (TimeoutError subclasses Error) for the branches
 # that catch/raise them.

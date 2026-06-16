@@ -15,7 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .client import NotebookLMClient
-from .config import AuthConfig, ServerConfig, load_config
+from .config import AuthConfig, ServerConfig, _copy_tree, load_config
 from .exceptions import ConfigurationError
 from .server import NotebookLMFastMCP
 
@@ -566,7 +566,6 @@ def import_profile(ctx: click.Context, from_profile: str, to_profile: str) -> No
 
     try:
         from pathlib import Path
-        from shutil import copytree, rmtree
 
         source = Path(from_profile)
         dest = Path(to_profile)
@@ -576,9 +575,8 @@ def import_profile(ctx: click.Context, from_profile: str, to_profile: str) -> No
 
         if dest.exists():
             console.print(f"[yellow]Removing existing profile: {dest}[/yellow]")
-            rmtree(dest)
 
-        copytree(source, dest)
+        _copy_tree(source, dest)
 
         console.print(
             Panel.fit(
@@ -611,7 +609,6 @@ def export_profile(ctx: click.Context, profile: Optional[str], to: str) -> None:
 
     try:
         from pathlib import Path
-        from shutil import copytree, rmtree
 
         source = Path(source_profile)
         dest = Path(to)
@@ -619,10 +616,7 @@ def export_profile(ctx: click.Context, profile: Optional[str], to: str) -> None:
         if not source.exists():
             raise ConfigurationError(f"Source profile not found: {source}")
 
-        if dest.exists():
-            rmtree(dest)
-
-        copytree(source, dest)
+        _copy_tree(source, dest)
 
         console.print(
             Panel.fit(

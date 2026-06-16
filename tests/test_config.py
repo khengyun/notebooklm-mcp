@@ -26,7 +26,6 @@ def test_server_config_round_trip(tmp_path):
             use_persistent_session=False,
             auto_login=False,
             import_profile_from=None,
-            export_profile_to=None,
         ),
     )
 
@@ -96,10 +95,9 @@ def test_server_config_save_and_load(tmp_path):
     assert loaded.default_notebook_id == "abc"
 
 
-def test_setup_and_export_profile(tmp_path, monkeypatch):
+def test_setup_profile_imports_existing_profile(tmp_path):
     source = tmp_path / "source"
     dest = tmp_path / "profile"
-    exported = tmp_path / "exported"
     source.mkdir()
     (source / "prefs.txt").write_text("data")
 
@@ -107,21 +105,12 @@ def test_setup_and_export_profile(tmp_path, monkeypatch):
         auth=AuthConfig(
             profile_dir=str(dest),
             import_profile_from=str(source),
-            export_profile_to=str(exported),
         )
     )
 
     config.setup_profile()
     assert dest.exists()
     assert (dest / "prefs.txt").read_text() == "data"
-
-    dest_file = dest / "cache"
-    dest_file.write_text("cache-data")
-
-    config.export_profile()
-    assert exported.exists()
-    assert (exported / "prefs.txt").read_text() == "data"
-    assert (exported / "cache").read_text() == "cache-data"
 
 
 def test_setup_profile_creates_new_directory_when_no_import(tmp_path):
@@ -173,43 +162,6 @@ def test_setup_profile_blank_import_path_treated_as_none(tmp_path):
 
     config.setup_profile()
     assert profile_dir.is_dir()
-
-
-def test_export_profile_no_target_is_noop(tmp_path):
-    """With export_profile_to unset, export_profile must return without doing
-    anything (covers the early-return branch, config.py 177)."""
-    source = tmp_path / "profile"
-    source.mkdir()
-    (source / "data.txt").write_text("x")
-
-    config = ServerConfig(
-        auth=AuthConfig(profile_dir=str(source), export_profile_to=None)
-    )
-
-    # Must not raise and must not create anything.
-    config.export_profile()
-    assert list(tmp_path.iterdir()) == [source]
-
-
-def test_export_profile_overwrites_existing_target(tmp_path):
-    """When the export target already exists it must be wiped and replaced
-    (covers the rmtree-on-export branch, config.py 188)."""
-    source = tmp_path / "profile"
-    source.mkdir()
-    (source / "current.txt").write_text("current")
-
-    export_target = tmp_path / "exported"
-    export_target.mkdir()
-    (export_target / "old.txt").write_text("old")
-
-    config = ServerConfig(
-        auth=AuthConfig(profile_dir=str(source), export_profile_to=str(export_target))
-    )
-    config.export_profile()
-
-    assert (export_target / "current.txt").read_text() == "current"
-    # The pre-existing content was removed before the copy.
-    assert not (export_target / "old.txt").exists()
 
 
 def test_chrome_channel_and_binary_round_trip(tmp_path):
@@ -301,18 +253,6 @@ def test_engine_round_trips_default_rpc(tmp_path):
     from_file = ServerConfig.from_file(str(path))
     assert from_file.engine == "rpc"
     assert from_file.auth.storage_state_path is None
-
-
-def test_export_profile_missing_source(tmp_path):
-    config = ServerConfig(
-        auth=AuthConfig(
-            profile_dir=str(tmp_path / "profile"),
-            export_profile_to=str(tmp_path / "exported"),
-        )
-    )
-
-    with pytest.raises(ConfigurationError, match="Source profile does not exist"):
-        config.export_profile()
 
 
 def test_load_config_prefers_file(tmp_path, monkeypatch):
