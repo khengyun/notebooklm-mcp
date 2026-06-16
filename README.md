@@ -1,8 +1,8 @@
 # NotebookLM MCP
 
-[![Tests](https://github.com/khengyun/notebooklm-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/khengyun/notebooklm-mcp/actions) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/) [![DeepWiki](https://img.shields.io/badge/DeepWiki-View%20Docs-blueviolet?logo=gitbook)](https://deepwiki.com/khengyun/notebooklm-mcp) [![Tests](https://github.com/khengyun/notebooklm-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/khengyun/notebooklm-mcp/actions) [![codecov](https://codecov.io/gh/khengyun/notebooklm-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/khengyun/notebooklm-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-MCP server for Google NotebookLM: chat with your sources and manage notebooks/sources as MCP tools. Uses an RPC backend ([notebooklm-py](https://github.com/teng-lin/notebooklm-py)) — no browser at runtime.
+**MCP server for Google NotebookLM — chat with your sources and manage notebooks/sources as MCP tools.** Driven by an RPC backend ([notebooklm-py](https://github.com/teng-lin/notebooklm-py)), so there's **no browser at runtime**.
 
 ## Setup
 
