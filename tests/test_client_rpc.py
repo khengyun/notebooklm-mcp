@@ -52,6 +52,9 @@ class _Backend:
         ask_error=None,
         source_get=None,
         fulltext=None,
+        audio_list=None,
+        gen_status=None,
+        share_status=None,
     ):
         self.calls: list[tuple] = []
         self._notebooks_data = list(notebooks) if notebooks is not None else []
@@ -60,6 +63,17 @@ class _Backend:
         # SourceFulltext object (for sources.get_fulltext), used by copy_source.
         self._source_get = dict(source_get) if source_get else {}
         self._fulltext = dict(fulltext) if fulltext else {}
+        self._audio_list = list(audio_list) if audio_list is not None else []
+        self._gen_status = gen_status or SimpleNamespace(
+            task_id="task-1", status="generating", url=None, error=None
+        )
+        self._share_status = share_status or SimpleNamespace(
+            notebook_id="nb1",
+            is_public=False,
+            view_level="VIEW",
+            share_url=None,
+            shared_users=[],
+        )
         self.summary = summary
         self.ask_result = (
             ask_result
@@ -71,6 +85,8 @@ class _Backend:
         self.notebooks = _NotebooksAPI(self)
         self.sources = _SourcesAPI(self)
         self.chat = _ChatAPI(self)
+        self.artifacts = _ArtifactsAPI(self)
+        self.sharing = _SharingAPI(self)
 
 
 class _NotebooksAPI:
@@ -140,6 +156,46 @@ class _ChatAPI:
         if self._b.ask_error is not None:
             raise self._b.ask_error
         return self._b.ask_result
+
+
+class _ArtifactsAPI:
+    def __init__(self, backend):
+        self._b = backend
+
+    async def generate_audio(self, notebook_id, language="en", instructions=None):
+        self._b.calls.append(
+            ("artifacts.generate_audio", notebook_id, language, instructions)
+        )
+        return self._b._gen_status
+
+    async def list_audio(self, notebook_id):
+        self._b.calls.append(("artifacts.list_audio", notebook_id))
+        return list(self._b._audio_list)
+
+
+class _SharingAPI:
+    def __init__(self, backend):
+        self._b = backend
+
+    async def get_status(self, notebook_id):
+        self._b.calls.append(("sharing.get_status", notebook_id))
+        return self._b._share_status
+
+    async def set_public(self, notebook_id, public):
+        self._b.calls.append(("sharing.set_public", notebook_id, public))
+        self._b._share_status.is_public = public
+        return self._b._share_status
+
+    async def add_user(self, notebook_id, email, permission=None):
+        self._b.calls.append(
+            (
+                "sharing.add_user",
+                notebook_id,
+                email,
+                getattr(permission, "name", permission),
+            )
+        )
+        return self._b._share_status
 
 
 class _StorageCM:
@@ -729,3 +785,96 @@ def test_create_notebook_from_sources_reports_partial_failure(monkeypatch, tmp_p
     assert len(result["failed"]) == 1
     assert result["failed"][0]["source_id"] == "bad"
     assert "error" in result["failed"][0]
+
+
+# --------------------------------------------------------------------------- #
+# Audio Overview
+# --------------------------------------------------------------------------- #
+def test_generate_audio_overview(monkeypatch, tmp_path):
+    backend = _Backend(
+        gen_status=SimpleNamespace(
+            task_id="t-9", status="generating", url=None, error=None
+        )
+    )
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(
+        client.generate_audio_overview("nb1", instructions="be brief", language="vi")
+    )
+
+    assert ("artifacts.generate_audio", "nb1", "vi", "be brief") in backend.calls
+    assert result["task_id"] == "t-9"
+    assert result["status"] == "generating"
+
+
+def test_list_audio_overviews(monkeypatch, tmp_path):
+    art = SimpleNamespace(
+        id="a1", title="Deep Dive", status="ready", url="https://x/a1"
+    )
+    backend = _Backend(audio_list=[art])
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    audios = asyncio.run(client.list_audio_overviews("nb1"))
+
+    assert ("artifacts.list_audio", "nb1") in backend.calls
+    assert audios == [
+        {"id": "a1", "title": "Deep Dive", "status": "ready", "url": "https://x/a1"}
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Sharing
+# --------------------------------------------------------------------------- #
+def test_get_share_status_is_read_only(monkeypatch, tmp_path):
+    status = SimpleNamespace(
+        notebook_id="nb1",
+        is_public=True,
+        view_level="VIEW",
+        share_url="https://share/nb1",
+        shared_users=[],
+    )
+    backend = _Backend(share_status=status)
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(client.get_share_status("nb1"))
+
+    assert backend.calls[-1] == ("sharing.get_status", "nb1")
+    # Read-only: it must NOT call set_public/add_user.
+    assert not any(
+        c[0] in ("sharing.set_public", "sharing.add_user") for c in backend.calls
+    )
+    assert result["is_public"] is True
+    assert result["share_url"] == "https://share/nb1"
+
+
+def test_set_notebook_public(monkeypatch, tmp_path):
+    backend = _Backend()
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    result = asyncio.run(client.set_notebook_public("nb1", True))
+
+    assert ("sharing.set_public", "nb1", True) in backend.calls
+    assert result["is_public"] is True
+
+
+def test_share_notebook_with_user_maps_permission(monkeypatch, tmp_path):
+    backend = _Backend()
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    asyncio.run(client.share_notebook_with_user("nb1", "a@b.com", permission="editor"))
+
+    # The string permission is mapped to the SharePermission enum (EDITOR).
+    call = [c for c in backend.calls if c[0] == "sharing.add_user"][0]
+    assert call[1] == "nb1"
+    assert call[2] == "a@b.com"
+    assert call[3] == "EDITOR"
+
+
+def test_share_notebook_unknown_permission_falls_back_to_viewer(monkeypatch, tmp_path):
+    backend = _Backend()
+    client = asyncio.run(started_client(monkeypatch, tmp_path, backend))
+
+    asyncio.run(client.share_notebook_with_user("nb1", "a@b.com", permission="bogus"))
+
+    call = [c for c in backend.calls if c[0] == "sharing.add_user"][0]
+    assert call[3] == "VIEWER"

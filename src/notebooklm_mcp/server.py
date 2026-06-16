@@ -308,6 +308,65 @@ class NotebookLMFastMCP:
             result = await client.create_notebook_from_sources(title, refs)
             return {"status": "success", **result}
 
+        # ------------------------------------------------------------------ #
+        # Audio Overview (podcast)
+        # ------------------------------------------------------------------ #
+        @self.app.tool()
+        @_tool("Failed to generate audio overview")
+        async def generate_audio_overview(
+            notebook_id: str, instructions: Optional[str] = None, language: str = "en"
+        ) -> Dict[str, Any]:
+            """Generate an Audio Overview (podcast) for a notebook. Generation
+            runs server-side; poll with list_audio_overviews for the result."""
+            client = await self._ensure_client()
+            result = await client.generate_audio_overview(
+                notebook_id, instructions=instructions, language=language
+            )
+            return {"status": "success", "generation": result}
+
+        @self.app.tool()
+        @_tool("Failed to list audio overviews")
+        async def list_audio_overviews(notebook_id: str) -> Dict[str, Any]:
+            """List the Audio Overviews generated for a notebook."""
+            client = await self._ensure_client()
+            audios = await client.list_audio_overviews(notebook_id)
+            return {"status": "success", "count": len(audios), "audio": audios}
+
+        # ------------------------------------------------------------------ #
+        # Sharing
+        # ------------------------------------------------------------------ #
+        @self.app.tool()
+        @_tool("Failed to get share status")
+        async def get_share_status(notebook_id: str) -> Dict[str, Any]:
+            """Read a notebook's current sharing status (read-only)."""
+            client = await self._ensure_client()
+            return {
+                "status": "success",
+                "share": await client.get_share_status(notebook_id),
+            }
+
+        @self.app.tool()
+        @_tool("Failed to set notebook public")
+        async def set_notebook_public(notebook_id: str, public: bool) -> Dict[str, Any]:
+            """Toggle public (link) sharing for a notebook. Setting public=true
+            exposes the notebook to anyone with the link."""
+            client = await self._ensure_client()
+            share = await client.set_notebook_public(notebook_id, public)
+            return {"status": "success", "share": share}
+
+        @self.app.tool()
+        @_tool("Failed to share notebook")
+        async def share_notebook_with_user(
+            notebook_id: str, email: str, permission: str = "viewer"
+        ) -> Dict[str, Any]:
+            """Share a notebook with a specific person by email
+            (permission: viewer | editor)."""
+            client = await self._ensure_client()
+            share = await client.share_notebook_with_user(
+                notebook_id, email, permission=permission
+            )
+            return {"status": "success", "share": share}
+
     async def start(
         self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000
     ) -> None:
