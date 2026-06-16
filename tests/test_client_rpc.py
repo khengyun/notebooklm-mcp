@@ -259,12 +259,8 @@ def test_source_dict_tolerates_missing_attrs():
 
 
 # --------------------------------------------------------------------------- #
-# Engine flags / trivial properties
+# Trivial properties
 # --------------------------------------------------------------------------- #
-def test_supports_management_is_true():
-    assert NotebookLMRPCClient.supports_management is True
-
-
 def test_default_notebook_seeded_and_unauthenticated():
     cfg = ServerConfig(default_notebook_id="seed")
     client = NotebookLMRPCClient(cfg)

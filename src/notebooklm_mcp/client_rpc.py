@@ -55,10 +55,6 @@ def _source_dict(src: Any) -> Dict[str, Any]:
 class NotebookLMRPCClient:
     """High-level RPC client (notebooklm-py backend) with management support."""
 
-    #: Marks this engine as capable of notebook/source management so the server
-    #: can expose those tools (the browser engine sets this False).
-    supports_management = True
-
     def __init__(self, config: ServerConfig):
         self.config = config
         self.current_notebook_id: Optional[str] = config.default_notebook_id
@@ -153,11 +149,8 @@ class NotebookLMRPCClient:
             raise ChatError(f"RPC chat failed: {exc}") from exc
         self._last_answer = getattr(result, "answer", str(result))
 
-    async def get_response(
-        self, wait_for_completion: bool = True, max_wait: Optional[int] = None
-    ) -> str:
-        # ``chat.ask`` already returns the completed answer, so the stored
-        # answer is final; the wait args are accepted for interface parity.
+    async def get_response(self) -> str:
+        # ``chat.ask`` already returns the completed answer in send_message.
         return self._last_answer or "No response content found"
 
     async def navigate_to_notebook(self, notebook_id: str) -> str:
